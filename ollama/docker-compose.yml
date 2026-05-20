@@ -1,0 +1,76 @@
+services:
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-data:/root/.ollama
+    devices:
+      - /dev/kfd:/dev/kfd
+      - /dev/dri:/dev/dri
+    environment:
+      # Enable Vulkan for AMD iGPU
+      - OLLAMA_VULKAN=1
+      - OLLAMA_MODELS=/root/.ollama/models
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        # Start Ollama server in background
+        /bin/ollama serve &
+        OLLAMA_PID=$$!
+
+        # Wait for server to be ready (curl not available in image)
+        echo "Waiting for Ollama server to start..."
+        for i in $$(seq 1 30); do
+          if /bin/ollama list > /dev/null 2>&1; then
+            echo "Ollama server is ready!"
+            break
+          fi
+          sleep 1
+        done
+
+        # Pull the model (skips if already present)
+        echo "Checking for ministral-3:14b..."
+        /bin/ollama list 2>/dev/null | grep -q "ministral-3:14b" && echo "ministral-3:14b already exists, skipping pull." || {
+          echo "Pulling ministral-3:14b (this may take a while)..."
+          /bin/ollama pull ministral-3:14b
+        }
+
+        # Pull gemma4:26b for testing
+        echo "Checking for gemma4:26b..."
+        /bin/ollama list 2>/dev/null | grep -q "gemma4:26b" && echo "gemma4:26b already exists, skipping pull." || {
+          echo "Pulling gemma4:26b (this may take a while)..."
+          /bin/ollama pull gemma4:26b
+        }
+
+        # Remove old qwen2.5 model to preserve space
+        echo "Removing old qwen2.5:14b model if present..."
+        /bin/ollama list 2>/dev/null | grep -q "qwen2.5:14b" && /bin/ollama rm qwen2.5:14b || echo "qwen2.5:14b not found, nothing to remove."
+
+        echo "Ollama ready with ministral-3:14b. Server running on :11434"
+
+        # Wait for the background ollama process
+        wait $$OLLAMA_PID
+
+  searxng:
+    image: searxng/searxng:latest
+    container_name: searxng
+    restart: unless-stopped
+    ports:
+      - "8964:8080"
+    volumes:
+      - ./searxng-settings.yml:/etc/searxng/settings.yml:ro
+    environment:
+      - SEARXNG_BASE_URL=http://localhost:8964/
+      - SEARXNG_SECRET=$(openssl rand -hex 16)
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  ollama-data:
+    name: tau-ollama-data
