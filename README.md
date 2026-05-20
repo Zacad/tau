@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  A lightweight TUI agent that orchestrates skills and subagents to execute workflows across coding, research, and analysis tasks.
+  A lightweight CLI agent that orchestrates skills and subagents to execute workflows across coding, research, and analysis tasks.
 </p>
 
 ---
