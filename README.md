@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <strong>Minimalist agentic coding tool — inspired by PI, written in Go.</strong>
+  <strong>Minimalist agentic tool — inspired by PI, written in Go.</strong>
 </p>
 
 <p align="center">
