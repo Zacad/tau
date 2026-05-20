@@ -1,7 +1,7 @@
 # Tau
 
 <p align="center">
-  <img src="assets/logo.png" alt="Tau Logo" width="128" height="128">
+  <img src="assets/logo.png" alt="Tau Logo" width="180" height="180">
 </p>
 
 <p align="center">
