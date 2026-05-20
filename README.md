@@ -216,6 +216,98 @@ Key formats supported:
 | `ANTHROPIC_API_KEY` | Anthropic API key |
 | `GOOGLE_API_KEY` | Google API key |
 
+### Web Search
+
+Tau includes a `websearch` tool that enables the agent to search the web for current information. Three search backends are supported:
+
+| Backend | Type | API Key Required | Default |
+|---------|------|------------------|---------|
+| **SearXNG** | Self-hosted metasearch | No | `http://localhost:8964` |
+| **Tavily** | Cloud API | Yes | `https://api.tavily.com` |
+| **Brave** | Cloud API | Yes | `https://api.search.brave.com` |
+
+#### How It Works
+
+At startup, Tau auto-discovers available backends:
+1. **SearXNG** — probed via HTTP health check at the configured URL
+2. **Tavily** — enabled if an API key is found in `auth.json` under the `"tavily"` key
+3. **Brave** — enabled if an API key is found in `auth.json` under the `"brave"` key
+
+Multiple backends can be active simultaneously. When the agent calls `websearch`, Tau tries backends in order and falls back to the next one if a backend fails. Auth errors (401/403) permanently mark a backend as "degraded" for the session.
+
+#### Configuration
+
+Add a `search` section to `~/.tau/config.json`:
+
+```json
+{
+  "search": {
+    "backend": "auto",
+    "searxng_url": "http://localhost:8964"
+  }
+}
+```
+
+| Field | Description | Default |
+|-------|-------------|---------|
+| `backend` | Preferred backend name (`"searxng"`, `"tavily"`, `"brave"`) or `"auto"` for discovery order | `"auto"` |
+| `searxng_url` | URL of your SearXNG instance | `"http://localhost:8964"` |
+
+#### Setting Up SearXNG (No API Key)
+
+SearXNG is a self-hosted metasearch engine. The easiest way to run it locally is via Docker:
+
+```bash
+cd ollama
+docker compose up -d searxng
+```
+
+Verify it's running:
+
+```bash
+curl -s "http://localhost:8964/healthz"
+```
+
+SearXNG settings are configured via `./ollama/searxng-settings.yml` (mounted read-only into the container). JSON API is enabled by default (`formats: [html, json]`).
+
+#### Setting Up Tavily
+
+1. Get an API key from [tavily.com](https://tavily.com) (free tier available)
+2. Add it to `~/.tau/auth.json`:
+
+```json
+{
+  "tavily": "tvly-your-api-key-here"
+}
+```
+
+#### Setting Up Brave Search
+
+1. Get an API key from [brave.com/search/api](https://brave.com/search/api/) (free tier: 2,000 queries/month)
+2. Add it to `~/.tau/auth.json`:
+
+```json
+{
+  "brave": "your-brave-api-key-here"
+}
+```
+
+#### Tool Parameters
+
+The `websearch` tool accepts:
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `query` | string | Search query |
+| `q` | string | Alias for `query` |
+| `queries` | string[] | Multiple search queries (uses first one) |
+| `maxResults` | int | Maximum results to return (default: 8) |
+| `includeContent` | bool | Include full page content in results (uses more tokens) |
+
+#### Related: Web Fetch
+
+The `webfetch` tool is always available (no API key required). It fetches and extracts content from a specific URL. Use it after `websearch` to read the full content of promising results.
+
 ### Context Files
 
 Tau loads `AGENTS.md` and `CLAUDE.md` files to customize agent behavior:
