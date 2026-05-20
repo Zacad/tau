@@ -1452,6 +1452,33 @@ IDLE ──Enter/submit──► STREAMING ──AgentEnd/PromptDone──► ID
 | `Esc` | Clear input |
 | `PgUp/PgDn` | Scroll viewport |
 | `Mouse wheel` | Scroll viewport |
+| `Mouse click+drag` | Select text in viewport (auto-scrolls at edges) |
+| `Mouse release` | Copy selected text to clipboard |
+
+### 11.6.1 Mouse Selection
+
+The viewport supports mouse-based text selection with auto-scroll and clipboard copy:
+
+**How it works:**
+1. **Click** (left button) starts selection at cursor position
+2. **Drag** updates selection end position; auto-scrolls when cursor is within 3 rows of viewport top/bottom edge
+3. **Release** ends selection and copies text to clipboard
+
+**Clipboard mechanism:**
+- Primary: OSC 52 escape sequence (works in Kitty, Ghostty, Alacritty, WezTerm, iTerm2, tmux, screen)
+- Fallback (Linux): `wl-copy` (Wayland) → `xclip` (X11) → `xsel`
+- Fallback (macOS): `pbcopy`
+- Fallback (Windows): `clip`
+
+**Visual feedback:**
+- Selected text range is highlighted using viewport's `SetHighlights` API
+- Highlight style: blue background (`color 57`) with white foreground
+
+**Implementation:**
+- Mouse mode: `tea.MouseModeCellMotion` (captures click, drag, release events)
+- Selection state: `selectionState` struct with start/end line/column
+- Auto-scroll: `tea.Every(100ms)` timer triggers `AutoScrollMsg` during drag near edges
+- Text extraction: Works from raw block content (not rendered output with ANSI codes)
 
 ### 11.7 Command System
 

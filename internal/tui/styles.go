@@ -161,4 +161,9 @@ var (
 	paletteDisabledTagStyle = lipgloss.NewStyle().
 					Foreground(lipgloss.Color("236")).
 					Italic(true)
+
+	// Selection highlight style.
+	selectionHighlightStyle = lipgloss.NewStyle().
+					Background(lipgloss.Color("63")).
+					Foreground(lipgloss.Color("15"))
 )

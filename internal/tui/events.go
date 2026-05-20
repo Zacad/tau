@@ -34,3 +34,6 @@ type QuitMsg struct{}
 
 // TuiTickMsg fires periodically during streaming to keep the UI responsive.
 type TuiTickMsg struct{}
+
+// AutoScrollMsg fires periodically during mouse selection drag to scroll the viewport.
+type AutoScrollMsg struct{}

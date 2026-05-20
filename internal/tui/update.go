@@ -117,6 +117,18 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if cmd != nil {
 			return m, cmd
 		}
+
+	case tea.MouseClickMsg:
+		return m.handleMouseClick(msg)
+
+	case tea.MouseMotionMsg:
+		return m.handleMouseMotion(msg)
+
+	case tea.MouseReleaseMsg:
+		return m.handleMouseRelease(msg)
+
+	case AutoScrollMsg:
+		return m.handleAutoScroll()
 	}
 
 	// Route messages to palette-based multi-step runner.
@@ -915,4 +927,251 @@ func (m *Model) handleMultiStepTaskComplete() tea.Cmd {
 		return m.executePaletteMultiStepResult()
 	}
 	return cmd
+}
+
+// --- Mouse selection handling ---
+
+// viewportTop returns the screen row where the viewport content area starts.
+func (m *Model) viewportTop() int {
+	return 2 // header is 2 lines
+}
+
+// viewportBottom returns the screen row where the viewport content area ends (exclusive).
+func (m *Model) viewportBottom() int {
+	footerH := 2
+	inputAreaH := m.input.Height() + 3
+	return m.height - footerH - inputAreaH
+}
+
+// handleMouseClick starts a text selection.
+func (m *Model) handleMouseClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
+	// Only left button starts selection
+	if msg.Button != tea.MouseButton(1) {
+		return m, nil
+	}
+
+	// Check if click is within viewport area
+	vpTop := m.viewportTop()
+	vpBottom := m.viewportBottom()
+	if msg.Y < vpTop || msg.Y >= vpBottom {
+		return m, nil
+	}
+
+	// Convert screen coordinates to viewport-relative coordinates
+	relY := msg.Y - vpTop
+
+	// Map screen row to content line using viewport's line mapping
+	contentLine := m.screenRowToContentLine(relY)
+
+	m.selectionActive = true
+	m.selection.startLine = contentLine
+	m.selection.startCol = msg.X
+	m.selection.endLine = contentLine
+	m.selection.endCol = msg.X
+
+	m.updateViewport()
+	return m, nil
+}
+
+// handleMouseMotion updates selection during drag and triggers auto-scroll.
+func (m *Model) handleMouseMotion(msg tea.MouseMotionMsg) (tea.Model, tea.Cmd) {
+	if !m.selectionActive {
+		return m, nil
+	}
+
+	vpTop := m.viewportTop()
+	vpBottom := m.viewportBottom()
+
+	// Auto-scroll when cursor is near edges
+	autoScrollZone := 3
+	var scrollCmd tea.Cmd
+
+	if msg.Y < vpTop+autoScrollZone && m.viewport.YOffset() > 0 {
+		// Scroll up
+		m.autoScrollDir = -1
+		m.viewport.ScrollUp(1)
+		scrollCmd = m.startAutoScroll()
+	} else if msg.Y >= vpBottom-autoScrollZone && !m.viewport.AtBottom() {
+		// Scroll down
+		m.autoScrollDir = 1
+		m.viewport.ScrollDown(1)
+		scrollCmd = m.startAutoScroll()
+	} else {
+		// Stop auto-scroll
+		m.autoScrollDir = 0
+		m.stopAutoScroll()
+	}
+
+	// Check if within viewport area
+	if msg.Y < vpTop || msg.Y >= vpBottom {
+		if scrollCmd != nil {
+			return m, scrollCmd
+		}
+		return m, nil
+	}
+
+	relY := msg.Y - vpTop
+	contentLine := m.screenRowToContentLine(relY)
+
+	m.selection.endLine = contentLine
+	m.selection.endCol = msg.X
+
+	m.updateViewport()
+
+	if scrollCmd != nil {
+		return m, scrollCmd
+	}
+	return m, nil
+}
+
+// handleMouseRelease ends selection and copies to clipboard.
+func (m *Model) handleMouseRelease(msg tea.MouseReleaseMsg) (tea.Model, tea.Cmd) {
+	m.stopAutoScroll()
+
+	if !m.selectionActive {
+		return m, nil
+	}
+
+	m.selectionActive = false
+
+	// Extract selected text from content
+	selectedText := m.extractSelectedText()
+	if selectedText != "" {
+		_ = copyToClipboard(selectedText)
+	}
+
+	// Reset selection
+	m.selection = selectionState{}
+
+	m.updateViewport()
+	return m, nil
+}
+
+// startAutoScroll starts a timer for continuous scrolling during drag.
+func (m *Model) startAutoScroll() tea.Cmd {
+	return tea.Every(100*time.Millisecond, func(t time.Time) tea.Msg {
+		return AutoScrollMsg{}
+	})
+}
+
+// stopAutoScroll stops the auto-scroll timer.
+func (m *Model) stopAutoScroll() {
+	m.autoScrollDir = 0
+}
+
+// handleAutoScroll continues auto-scrolling during selection drag.
+func (m *Model) handleAutoScroll() (tea.Model, tea.Cmd) {
+	if !m.selectionActive || m.autoScrollDir == 0 {
+		m.stopAutoScroll()
+		return m, nil
+	}
+
+	if m.autoScrollDir == -1 && m.viewport.YOffset() > 0 {
+		m.viewport.ScrollUp(1)
+		m.updateViewport()
+		return m, tea.Every(100*time.Millisecond, func(t time.Time) tea.Msg {
+			return AutoScrollMsg{}
+		})
+	} else if m.autoScrollDir == 1 && !m.viewport.AtBottom() {
+		m.viewport.ScrollDown(1)
+		m.updateViewport()
+		return m, tea.Every(100*time.Millisecond, func(t time.Time) tea.Msg {
+			return AutoScrollMsg{}
+		})
+	}
+
+	m.stopAutoScroll()
+	return m, nil
+}
+
+// screenRowToContentLine maps a screen row to a content line index.
+func (m *Model) screenRowToContentLine(screenRow int) int {
+	// Get the viewport's current visible content
+	// The viewport component doesn't expose line mapping directly,
+	// so we approximate using the y-offset and visible line count
+	contentLine := m.viewport.YOffset() + screenRow
+	totalLines := m.viewport.TotalLineCount()
+	if contentLine >= totalLines {
+		contentLine = totalLines - 1
+	}
+	if contentLine < 0 {
+		contentLine = 0
+	}
+	return contentLine
+}
+
+// extractSelectedText extracts the text between selection start and end.
+func (m *Model) extractSelectedText() string {
+	// Build the same rendered content that's displayed in the viewport
+	var content string
+	if m.renderedCacheValid {
+		content = m.renderedCache
+	} else {
+		content = renderBlocks(m.blocks, m.width)
+	}
+	if m.pendingBuilder.Len() > 0 {
+		if m.pendingKind == blockAssistantText && m.pendingRendered != "" {
+			content += renderPendingBlock(m.pendingBuilder.String(), m.pendingKind, m.width, m.pendingRendered)
+		} else {
+			content += renderPendingBlock(m.pendingBuilder.String(), m.pendingKind, m.width, "")
+		}
+	}
+
+	// Strip ANSI codes to get clean text for clipboard
+	lines := strings.Split(content, "\n")
+	cleanLines := make([]string, len(lines))
+	for i, line := range lines {
+		cleanLines[i] = stripANSI(line)
+	}
+
+	startLine := m.selection.startLine
+	endLine := m.selection.endLine
+	startCol := m.selection.startCol
+	endCol := m.selection.endCol
+
+	// Normalize selection direction
+	if startLine > endLine || (startLine == endLine && startCol > endCol) {
+		startLine, endLine = endLine, startLine
+		startCol, endCol = endCol, startCol
+	}
+
+	if startLine >= len(cleanLines) {
+		return ""
+	}
+	if endLine >= len(cleanLines) {
+		endLine = len(cleanLines) - 1
+	}
+
+	var selected []string
+	for i := startLine; i <= endLine; i++ {
+		line := cleanLines[i]
+		lineRunes := []rune(line)
+		lineLen := len(lineRunes)
+
+		if i == startLine && i == endLine {
+			// Single line selection
+			if startCol >= lineLen {
+				return ""
+			}
+			end := endCol
+			if end > lineLen {
+				end = lineLen
+			}
+			selected = append(selected, string(lineRunes[startCol:end]))
+		} else if i == startLine {
+			if startCol < lineLen {
+				selected = append(selected, string(lineRunes[startCol:]))
+			}
+		} else if i == endLine {
+			end := endCol
+			if end > lineLen {
+				end = lineLen
+			}
+			selected = append(selected, string(lineRunes[:end]))
+		} else {
+			selected = append(selected, line)
+		}
+	}
+
+	return strings.Join(selected, "\n")
 }

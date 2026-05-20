@@ -133,12 +133,24 @@ type Model struct {
 	// Prompt history for up/down arrow navigation.
 	promptHistory      []string // newest-first
 	promptHistoryIndex int      // -1 = not browsing, 0 = most recent, 1 = older...
+
+	// Text selection state for mouse-based copy.
+	selection       selectionState
+	selectionActive bool
+
+	// Previous selection state for change detection.
+	prevSelection       selectionState
+	prevSelectionActive bool
+
+	// Auto-scroll state during selection drag.
+	autoScrollDir int // -1 = up, 0 = none, 1 = down
 }
 
 // NewModel creates a new TUI model.
 func NewModel(session *sdk.Session) *Model {
 	vp := viewport.New()
 	vp.SoftWrap = false
+	vp.HighlightStyle = selectionHighlightStyle
 
 	ta := textarea.New()
 	ta.Placeholder = "Type a message... (Ctrl+D to quit, /help for commands)"
@@ -308,16 +320,24 @@ func (m *Model) updateViewportWithForce(force bool) {
 	}
 	m.lastViewportUpdate = time.Now()
 
+	// Detect selection state change — need to re-render for highlight updates.
+	selectionChanged := m.selectionActive != m.prevSelectionActive ||
+		m.selection != m.prevSelection
+
 	// Skip expensive SetContent() if nothing has changed since last call.
 	pendingLen := m.pendingBuilder.Len()
 	pendingRenderedLen := len(m.pendingRendered)
 	blocksLen := len(m.blocks)
-	if !force && pendingLen == m.lastSetContentPendingLen && pendingRenderedLen == m.lastSetContentPendingRenderedLen && blocksLen == m.lastSetContentBlocksLen {
+	if !force && !selectionChanged && pendingLen == m.lastSetContentPendingLen && pendingRenderedLen == m.lastSetContentPendingRenderedLen && blocksLen == m.lastSetContentBlocksLen {
 		return
 	}
 	m.lastSetContentPendingLen = pendingLen
 	m.lastSetContentPendingRenderedLen = pendingRenderedLen
 	m.lastSetContentBlocksLen = blocksLen
+
+	// Track selection change
+	m.prevSelection = m.selection
+	m.prevSelectionActive = m.selectionActive
 
 	var content string
 	if m.renderedCacheValid {
@@ -338,6 +358,11 @@ func (m *Model) updateViewportWithForce(force bool) {
 	wasAtBottom := m.viewport.AtBottom()
 	oldYOffset := m.viewport.YOffset()
 
+	// Apply selection highlights to content before setting
+	if m.selectionActive {
+		content = m.applySelectionHighlightsToContent(content)
+	}
+
 	m.viewport.SetContent(content)
 
 	if wasAtBottom {
@@ -355,6 +380,94 @@ func (m *Model) updateViewportWithForce(force bool) {
 func (m *Model) invalidateRenderedCache() {
 	m.renderedCache = ""
 	m.renderedCacheValid = false
+}
+
+// applySelectionHighlightsToContent wraps selected text ranges with ANSI highlight codes.
+func (m *Model) applySelectionHighlightsToContent(content string) string {
+	startLine := m.selection.startLine
+	endLine := m.selection.endLine
+	startCol := m.selection.startCol
+	endCol := m.selection.endCol
+
+	// Normalize selection direction
+	if startLine > endLine || (startLine == endLine && startCol > endCol) {
+		startLine, endLine = endLine, startLine
+		startCol, endCol = endCol, startCol
+	}
+
+	if startLine < 0 || endLine < 0 {
+		return content
+	}
+
+	// ANSI codes for highlight: white foreground, blue background
+	const hlStart = "\x1b[97;48;5;63m"
+	const hlEnd = "\x1b[0m"
+
+	lines := strings.Split(content, "\n")
+	var highlighted strings.Builder
+
+	for i, line := range lines {
+		if i < startLine || i > endLine {
+			// Outside selection range - keep as-is
+			highlighted.WriteString(line)
+		} else {
+			// Inside selection range - apply partial or full highlight
+			clean := stripANSI(line)
+			cleanRunes := []rune(clean)
+			lineLen := len(cleanRunes)
+
+			if i == startLine && i == endLine {
+				// Single line: highlight from startCol to endCol
+				if startCol >= lineLen {
+					highlighted.WriteString(clean)
+				} else {
+					end := endCol
+					if end > lineLen {
+						end = lineLen
+					}
+					highlighted.WriteString(string(cleanRunes[:startCol]))
+					highlighted.WriteString(hlStart)
+					highlighted.WriteString(string(cleanRunes[startCol:end]))
+					highlighted.WriteString(hlEnd)
+					if end < lineLen {
+						highlighted.WriteString(string(cleanRunes[end:]))
+					}
+				}
+			} else if i == startLine {
+				// First line of multi-line selection: highlight from startCol to end
+				if startCol >= lineLen {
+					highlighted.WriteString(clean)
+				} else {
+					highlighted.WriteString(string(cleanRunes[:startCol]))
+					highlighted.WriteString(hlStart)
+					highlighted.WriteString(string(cleanRunes[startCol:]))
+					highlighted.WriteString(hlEnd)
+				}
+			} else if i == endLine {
+				// Last line of multi-line selection: highlight from start to endCol
+				end := endCol
+				if end > lineLen {
+					end = lineLen
+				}
+				highlighted.WriteString(hlStart)
+				highlighted.WriteString(string(cleanRunes[:end]))
+				highlighted.WriteString(hlEnd)
+				if end < lineLen {
+					highlighted.WriteString(string(cleanRunes[end:]))
+				}
+			} else {
+				// Middle line: highlight entire line
+				highlighted.WriteString(hlStart)
+				highlighted.WriteString(clean)
+				highlighted.WriteString(hlEnd)
+			}
+		}
+		if i < len(lines)-1 {
+			highlighted.WriteString("\n")
+		}
+	}
+
+	return highlighted.String()
 }
 
 // refreshRenderedCache re-renders all finalized blocks and stores the result.
