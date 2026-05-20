@@ -16,9 +16,9 @@
 
 ## Goal
 
-Tau is a personal coding agent built on the philosophy that **orchestration is not code — it's instructions**. Instead of hardcoding workflows, the agent reads context files (`AGENTS.md`), skill definitions (`SKILL.md`), and follows them autonomously through its normal loop. No special orchestration framework needed.
+Tau is a personal lightweight agent.
 
-Built for a single user who wants skills and subagents working out of the box — without installing or configuring extensions.
+[Built for a single user who wants skills and subagents]() working out of the box — without installing or configuring extensions.
 
 ## Features
 
