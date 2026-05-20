@@ -18,7 +18,7 @@
 
 Tau is a personal lightweight agent.
 
-[Built for a single user who wants skills and subagents]() working out of the box — without installing or configuring extensions.
+Built for a single user who wants skills and subagents working out of the box — without installing or configuring extensions.
 
 ## Features
 
@@ -94,7 +94,7 @@ tau                               # interactive mode
 | `--tools LIST` | Restrict available tools (e.g., `read,grep,find,ls`) |
 | `--read-only` | Disable write, edit, and bash tools |
 | `--mock URL` | Use mock provider at URL (for testing) |
-| `--version` | Show version information |
+| `--version`, `-v` | Show version information |
 | `-h, --help` | Show help |
 
 ### Interactive Commands
@@ -103,13 +103,20 @@ tau                               # interactive mode
 |---------|-------------|
 | `/quit`, `/exit` | Exit the application |
 | `/help` | Show help message |
+| `/new` | Start a new session |
+| `/resume` | Resume a previous session (session picker) |
 | `/name <name>` | Rename current session |
 | `/session` | Show session information |
-| `/model` | Change active model |
+| `/model` | Change active model (picker) |
+| `/thinking` | Set thinking/reasoning level (picker) |
 | `/compact` | Trigger context compaction |
 | `/clear` | Clear viewport |
 | `/skills` | List available skills |
 | `/skill:<name>` | Load a skill's content |
+| `/agents` | List subagent types and user-defined agents |
+| `/connect` | Connect to a provider (multi-step wizard) |
+| `/disconnect` | Disconnect/disable a provider (multi-step wizard) |
+| `/reload` | Reload custom commands |
 
 ### Keyboard Shortcuts
 
@@ -120,7 +127,16 @@ tau                               # interactive mode
 | `Tab` | Auto-complete commands and skill names |
 | `Ctrl+D` | Quit (when input empty) |
 | `Ctrl+C` | Abort response / Exit (double-tap when idle) |
+| `Ctrl+P` | Open command palette |
 | `Esc` | Clear input |
+
+### Custom Commands
+
+Define custom commands as markdown files with YAML frontmatter in:
+- **Project**: `.tau/commands/` (walk up from cwd)
+- **Global**: `~/.tau/commands/`
+
+Commands are loaded automatically and reload with `/reload`.
 
 ## Configuration
 
