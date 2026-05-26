@@ -72,4 +72,10 @@ var (
 	MessageHintStyle = lipgloss.NewStyle().
 				Foreground(lipgloss.Color("242")).
 				Italic(true)
+
+	CategoryHeaderStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("81")).
+				Bold(true).
+				MarginTop(1).
+				MarginBottom(1)
 )

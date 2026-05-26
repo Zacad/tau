@@ -22,11 +22,11 @@ var logger = slog.Default().With(slog.String("pkg", "config"))
 
 // Constants for Tau directory structure.
 const (
-	TauDirName = ".tau"
-	SkillsDirName = "skills"
-	AgentsDirName = ".agents"
-	ConfigFileName = "config.json"
-	AuthFileName  = "auth.json"
+	TauDirName      = ".tau"
+	SkillsDirName   = "skills"
+	AgentsDirName   = ".agents"
+	ConfigFileName  = "config.json"
+	AuthFileName    = "auth.json"
 	SessionsDirName = "sessions"
 )
 
@@ -42,6 +42,44 @@ type Config struct {
 	Search           SearchConfig              `json:"search,omitempty"`
 }
 
+// UnmarshalJSON supports human-readable duration strings for fields documented
+// as Go durations while preserving defaults already present on Config.
+func (c *Config) UnmarshalJSON(data []byte) error {
+	type configAlias Config
+	aux := struct {
+		SubagentTimeout json.RawMessage `json:"subagent_timeout,omitempty"`
+		*configAlias
+	}{
+		configAlias: (*configAlias)(c),
+	}
+
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+
+	if len(aux.SubagentTimeout) == 0 || string(aux.SubagentTimeout) == "null" {
+		return nil
+	}
+
+	var timeoutString string
+	if err := json.Unmarshal(aux.SubagentTimeout, &timeoutString); err == nil {
+		d, err := time.ParseDuration(timeoutString)
+		if err != nil {
+			return fmt.Errorf("parsing subagent_timeout %q: %w", timeoutString, err)
+		}
+		c.SubagentTimeout = d
+		return nil
+	}
+
+	var timeoutNanos int64
+	if err := json.Unmarshal(aux.SubagentTimeout, &timeoutNanos); err == nil {
+		c.SubagentTimeout = time.Duration(timeoutNanos)
+		return nil
+	}
+
+	return fmt.Errorf("parsing subagent_timeout: expected duration string or nanoseconds")
+}
+
 // ProviderConfig holds provider-specific configuration.
 type ProviderConfig struct {
 	Model   string   `json:"model,omitempty"`
@@ -52,28 +90,98 @@ type ProviderConfig struct {
 
 // CompactionConfig holds compaction trigger settings.
 type CompactionConfig struct {
-	ReserveTokens  int `json:"reserve_tokens,omitempty"`
+	ReserveTokens    int `json:"reserve_tokens,omitempty"`
 	KeepRecentTokens int `json:"keep_recent_tokens,omitempty"`
 }
 
 // SearchConfig holds search backend configuration.
 type SearchConfig struct {
-	Backend   string `json:"backend,omitempty"`
+	Backend    string `json:"backend,omitempty"`
 	SearXNGURL string `json:"searxng_url,omitempty"`
 }
 
-// AuthStore holds API keys for providers.
-// Values can be literal keys, environment variable references ("$VAR"),
-// or shell commands ("!command").
-type AuthStore map[string]string
+// AuthValue holds credentials for a single provider.
+// It supports both API key (plain string) and OAuth (structured object) formats.
+// Custom JSON marshaling ensures backward compatibility: API keys serialize as
+// plain strings, OAuth credentials serialize as objects with "type":"oauth".
+type AuthValue struct {
+	Type      string `json:"type,omitempty"`       // "oauth" or empty (means api_key)
+	Value     string `json:"value,omitempty"`      // API key value (may contain $VAR or !cmd)
+	Access    string `json:"access,omitempty"`     // OAuth access token
+	Refresh   string `json:"refresh,omitempty"`    // OAuth refresh token
+	Expires   int64  `json:"expires,omitempty"`    // OAuth expiry timestamp (Unix seconds)
+	AccountID string `json:"account_id,omitempty"` // OAuth account ID from JWT
+}
+
+// IsOAuth returns true if this is an OAuth credential.
+func (a AuthValue) IsOAuth() bool {
+	return a.Type == "oauth"
+}
+
+// IsAPIKey returns true if this is an API key credential.
+func (a AuthValue) IsAPIKey() bool {
+	return a.Type != "oauth" && a.Value != ""
+}
+
+// IsEmpty returns true if no credentials are set.
+func (a AuthValue) IsEmpty() bool {
+	return a.Value == "" && a.Access == ""
+}
+
+// APIKey returns the API key value (for api_key type credentials).
+func (a AuthValue) APIKey() string {
+	return a.Value
+}
+
+// MarshalJSON implements custom JSON serialization.
+// API key values (no OAuth fields set) serialize as plain strings for backward compatibility.
+// OAuth values serialize as objects with "type":"oauth".
+func (a AuthValue) MarshalJSON() ([]byte, error) {
+	if a.Type == "oauth" {
+		type alias AuthValue
+		return json.Marshal(alias(a))
+	}
+	// Plain string for backward compatibility
+	return json.Marshal(a.Value)
+}
+
+// UnmarshalJSON implements custom JSON deserialization.
+// Detects string vs object format and populates fields accordingly.
+func (a *AuthValue) UnmarshalJSON(data []byte) error {
+	// Try string first (backward compatible API key format)
+	var str string
+	if err := json.Unmarshal(data, &str); err == nil {
+		a.Type = ""
+		a.Value = str
+		a.Access = ""
+		a.Refresh = ""
+		a.Expires = 0
+		a.AccountID = ""
+		return nil
+	}
+
+	// Parse as object (OAuth format)
+	type alias AuthValue
+	var obj alias
+	if err := json.Unmarshal(data, &obj); err != nil {
+		return err
+	}
+	*a = AuthValue(obj)
+	return nil
+}
+
+// AuthStore holds API keys and OAuth credentials for providers.
+// Keys are provider identifiers (e.g., "openai", "anthropic").
+// Values can be API keys (literal, $ENV_VAR, or !command) or OAuth credentials.
+type AuthStore map[string]AuthValue
 
 // DefaultConfig returns a Config with sensible defaults.
 func DefaultConfig() Config {
 	return Config{
-		Providers:        make(map[string]ProviderConfig),
-		DefaultModel:     "",
+		Providers:    make(map[string]ProviderConfig),
+		DefaultModel: "",
 		Compaction: CompactionConfig{
-			ReserveTokens:  16384,
+			ReserveTokens:    16384,
 			KeepRecentTokens: 20000,
 		},
 		SubagentTimeout:  5 * time.Minute,
@@ -122,7 +230,7 @@ func LoadConfig(path string) (*Config, error) {
 	return &cfg, nil
 }
 
-// LoadAuth loads API keys from auth.json at the given path.
+// LoadAuth loads API keys and OAuth credentials from auth.json at the given path.
 // If path is empty, resolves to ~/.tau/auth.json.
 // Returns an empty AuthStore if the file does not exist.
 // Warns if file permissions are too open (should be 0600).
@@ -220,7 +328,7 @@ func AuthPath(path string) string {
 	return filepath.Join(home, TauDirName, AuthFileName)
 }
 
-// SaveAuth writes API keys to auth.json at the given path.
+// SaveAuth writes API keys and OAuth credentials to auth.json at the given path.
 // If path is empty, resolves to ~/.tau/auth.json.
 // Creates the .tau directory if it doesn't exist.
 // File permissions are set to 0600.
@@ -287,4 +395,15 @@ func SaveConfig(cfg *Config, path string) error {
 func execShellCommand(cmd string) (string, error) {
 	out, err := exec.Command("sh", "-c", cmd).Output()
 	return string(out), err
+}
+
+// UnmarshalJSONForTest is a test helper for unmarshaling JSON into a target.
+// Exported for use in config_test.go.
+func UnmarshalJSONForTest(data []byte, v any) error {
+	return json.Unmarshal(data, v)
+}
+
+// UnmarshalJSONForTest is a test helper method on AuthValue.
+func (a *AuthValue) UnmarshalJSONForTest(data []byte) error {
+	return a.UnmarshalJSON(data)
 }

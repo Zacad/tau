@@ -43,9 +43,9 @@ func TestDiscoverSkills_ProjectOverridesGlobal(t *testing.T) {
 	writeFile(t, filepath.Join(globalDir, "SKILL.md"),
 		"---\nname: my-skill\ndescription: Global version\n---\n\nGlobal content.\n")
 
-	// Project skill (overrides global)
+	// Project skill via .tau/skills/ (overrides global)
 	cwd := filepath.Join(root, "project")
-	projectDir := filepath.Join(cwd, ".agents", "skills", "my-skill")
+	projectDir := filepath.Join(cwd, ".tau", "skills", "my-skill")
 	mkdir(t, projectDir)
 	writeFile(t, filepath.Join(projectDir, "SKILL.md"),
 		"---\nname: my-skill\ndescription: Project version\n---\n\nProject content.\n")
@@ -265,6 +265,65 @@ func TestDiscoverSkills_ProjectWalksUpParents(t *testing.T) {
 	names := skillNames(skills)
 	if !contains(names, "parent-skill") {
 		t.Errorf("expected to find parent-skill when cwd is subdir, found: %v", names)
+	}
+}
+
+func TestDiscoverSkills_ProjectWalksUpParentsTauSkills(t *testing.T) {
+	root := testutil.TempDir(t)
+
+	mkdir(t, filepath.Join(root, "project", ".tau", "skills", "tau-parent-skill"))
+	writeFile(t, filepath.Join(root, "project", ".tau", "skills", "tau-parent-skill", "SKILL.md"),
+		"---\nname: tau-parent-skill\ndescription: From .tau/skills in parent\n---\n")
+
+	cwd := filepath.Join(root, "project", "subdir")
+	skills := DiscoverSkillsWithFS(cwd, emptyEmbedFS{})
+	names := skillNames(skills)
+	if !contains(names, "tau-parent-skill") {
+		t.Errorf("expected to find tau-parent-skill when cwd is subdir, found: %v", names)
+	}
+}
+
+func TestDiscoverSkills_ProjectTauSkillsDir(t *testing.T) {
+	root := testutil.TempDir(t)
+
+	mkdir(t, filepath.Join(root, "project", ".tau", "skills", "tau-project-skill"))
+	writeFile(t, filepath.Join(root, "project", ".tau", "skills", "tau-project-skill", "SKILL.md"),
+		"---\nname: tau-project-skill\ndescription: From .tau/skills in project\n---\n")
+
+	cwd := filepath.Join(root, "project")
+	skills := DiscoverSkillsWithFS(cwd, emptyEmbedFS{})
+	names := skillNames(skills)
+	if !contains(names, "tau-project-skill") {
+		t.Errorf("expected to find tau-project-skill from .tau/skills/, found: %v", names)
+	}
+}
+
+func TestDiscoverSkills_ProjectTauOverridesGlobal(t *testing.T) {
+	root := testutil.TempDir(t)
+	testutil.SetHomeEnv(t, root)
+
+	// Global skill
+	globalDir := filepath.Join(root, ".tau", "skills", "my-skill")
+	mkdir(t, globalDir)
+	writeFile(t, filepath.Join(globalDir, "SKILL.md"),
+		"---\nname: my-skill\ndescription: Global version\n---\n\nGlobal content.\n")
+
+	// Project skill in .tau/skills/ (overrides global)
+	cwd := filepath.Join(root, "project")
+	projectDir := filepath.Join(cwd, ".tau", "skills", "my-skill")
+	mkdir(t, projectDir)
+	writeFile(t, filepath.Join(projectDir, "SKILL.md"),
+		"---\nname: my-skill\ndescription: Project version\n---\n\nProject content.\n")
+
+	skills := DiscoverSkillsWithFS(cwd, emptyEmbedFS{})
+	if len(skills) != 1 {
+		t.Fatalf("expected 1 skill, got %d", len(skills))
+	}
+	if skills[0].Description != "Project version" {
+		t.Errorf("expected project override, got description: %q", skills[0].Description)
+	}
+	if skills[0].Source != SourceProject {
+		t.Errorf("expected source=project, got %q", skills[0].Source)
 	}
 }
 

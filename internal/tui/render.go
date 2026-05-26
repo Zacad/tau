@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+
+	"github.com/adam/tau/internal/types"
 )
 
 // messageBlock is one unit of renderable content in the viewport.
@@ -22,6 +24,7 @@ type messageBlock struct {
 	isFinalized bool
 
 	// Tool call fields — only populated when kind == blockToolCall.
+	toolID   string
 	toolName string
 	toolArgs string
 	toolSt   toolStatus
@@ -44,9 +47,9 @@ const (
 
 // Truncation limits for tool call display.
 const (
-	toolArgsMaxLen      = 120
-	toolErrMaxLen       = 200
-	toolResultMaxLen    = 300
+	toolArgsMaxLen   = 120
+	toolErrMaxLen    = 200
+	toolResultMaxLen = 300
 )
 
 // blockType categorizes what kind of content a block holds.
@@ -165,7 +168,7 @@ func renderToolCallBlock(b messageBlock, width int) string {
 		nameRendered := toolCallNameStyle.Render(name)
 		var argPart string
 		if b.toolArgs != "" {
-			argPart = toolCallArgsStyle.Render(" " + truncate(b.toolArgs, toolArgsMaxLen))
+			argPart = toolCallArgsStyle.Render(" " + formatToolArgs(b.toolName, b.toolArgs))
 		}
 		result = prefix + " " + nameRendered + argPart
 
@@ -199,6 +202,11 @@ func renderToolCallBlock(b messageBlock, width int) string {
 
 // renderToolResultBlock renders a tool result with output preview.
 func renderToolResultBlock(b messageBlock, width int) string {
+	// Special rendering for subagent tool results
+	if b.toolResultName == "subagent" && !b.toolResultIsError {
+		return renderSubAgentResult(b, width)
+	}
+
 	var result string
 	if b.toolResultIsError {
 		prefix := toolResultErrStyle.Render("↳")
@@ -212,6 +220,30 @@ func renderToolResultBlock(b messageBlock, width int) string {
 		result = prefix + " " + nameRendered + "\n  " + content
 	}
 	return messagePaddingStyle.Render(result)
+}
+
+// renderSubAgentResult renders a subagent tool result with model, timeout, and duration.
+func renderSubAgentResult(b messageBlock, width int) string {
+	var info struct {
+		SubAgentID string `json:"subagent_id"`
+		Type       string `json:"type"`
+		Model      string `json:"model"`
+		Provider   string `json:"provider"`
+		Timeout    string `json:"timeout"`
+		Duration   string `json:"duration"`
+	}
+	if err := json.Unmarshal([]byte(b.toolResultContent), &info); err != nil {
+		// Fallback to default rendering if JSON is invalid
+		prefix := toolResultStyle.Render("↳")
+		nameRendered := toolResultNameStyle.Render(b.toolResultName)
+		content := toolResultContentStyle.Render(truncate(b.toolResultContent, toolResultMaxLen))
+		return messagePaddingStyle.Render(prefix + " " + nameRendered + "\n  " + content)
+	}
+
+	prefix := toolResultStyle.Render("↳")
+	nameRendered := toolResultNameStyle.Render("subagent")
+	meta := subAgentStyle.Render(fmt.Sprintf("%s [%s/%s] %s", info.SubAgentID, info.Provider, info.Model, info.Duration))
+	return messagePaddingStyle.Width(width).Render(prefix + " " + nameRendered + "\n  " + meta)
 }
 
 // renderTurnSeparator renders a subtle horizontal rule.
@@ -296,11 +328,13 @@ func formatToolArgs(toolName, argsJSON string) string {
 	case "grep":
 		return formatGrepArgs(raw)
 	case "find":
-		return formatFindArgs(raw)
+		return types.SummarizeToolArgs(toolName, raw)
 	case "ls":
 		return formatLsArgs(raw)
 	case "webfetch":
 		return formatWebfetchArgs(raw)
+	case "subagent":
+		return types.SummarizeToolArgs(toolName, raw)
 	}
 
 	// Fallback: clean key: value list

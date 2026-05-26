@@ -17,6 +17,17 @@ func (t testItem) Title() string       { return t.title }
 func (t testItem) Description() string { return t.desc }
 func (t testItem) FilterValue() string { return t.title }
 
+type testCategorizedItem struct {
+	title    string
+	desc     string
+	category string
+}
+
+func (t testCategorizedItem) Title() string       { return t.title }
+func (t testCategorizedItem) Description() string { return t.desc }
+func (t testCategorizedItem) FilterValue() string { return t.title + " " + t.category }
+func (t testCategorizedItem) Category() string    { return t.category }
+
 func keyUp() tea.KeyPressMsg {
 	return tea.KeyPressMsg{Code: tea.KeyUp}
 }
@@ -300,6 +311,182 @@ func TestPaletteList_EmptyItems(t *testing.T) {
 	l.Select()
 	if l.done {
 		t.Fatal("selecting from empty list should not set done")
+	}
+}
+
+func TestPaletteList_GroupedMode(t *testing.T) {
+	var l PaletteList
+	items := []PaletteItem{
+		testCategorizedItem{title: "gpt-4o", desc: "128K ctx", category: "OpenAI"},
+		testCategorizedItem{title: "gpt-4o-mini", desc: "128K ctx", category: "OpenAI"},
+		testCategorizedItem{title: "claude-sonnet-4", desc: "200K ctx", category: "Anthropic"},
+		testCategorizedItem{title: "gemini-2.5-pro", desc: "128K ctx", category: "Google"},
+	}
+	avail := []bool{true, true, true, true}
+
+	l.InitGrouped(items, avail)
+
+	if !l.grouped {
+		t.Fatal("grouped mode should be true")
+	}
+
+	if len(l.filtered) != 7 {
+		t.Fatalf("expected 7 items (3 headers + 4 models), got %d", len(l.filtered))
+	}
+
+	if l.filtered[0] != nil {
+		t.Fatal("first item should be header (nil)")
+	}
+
+	l.Select()
+	if !l.done {
+		t.Fatal("should be done after select")
+	}
+	result, idx := l.Result()
+	if result == nil {
+		t.Fatal("result should not be nil")
+	}
+	if result.Title() != "claude-sonnet-4" {
+		t.Fatalf("expected claude-sonnet-4 (first selectable after Anthropic header), got %s", result.Title())
+	}
+	if idx != 1 {
+		t.Fatalf("expected index 1, got %d", idx)
+	}
+}
+
+func TestPaletteList_GroupedNavigation(t *testing.T) {
+	var l PaletteList
+	items := []PaletteItem{
+		testCategorizedItem{title: "gpt-4o", desc: "", category: "OpenAI"},
+		testCategorizedItem{title: "claude-sonnet-4", desc: "", category: "Anthropic"},
+	}
+	avail := []bool{true, true}
+
+	l.InitGrouped(items, avail)
+
+	if l.filtered[0] != nil {
+		t.Fatalf("first item should be header (nil), got %v", l.filtered[0])
+	}
+
+	if l.filtered[l.selected].Title() != "claude-sonnet-4" {
+		t.Fatalf("first selectable should be claude-sonnet-4, got %s", l.filtered[l.selected].Title())
+	}
+
+	l.Down()
+	if l.filtered[l.selected].Title() != "gpt-4o" {
+		t.Fatalf("after Down: expected gpt-4o, got %s", l.filtered[l.selected].Title())
+	}
+
+	l.Down()
+	if l.filtered[l.selected].Title() != "claude-sonnet-4" {
+		t.Fatalf("after 2nd Down (wrap): expected claude-sonnet-4, got %s", l.filtered[l.selected].Title())
+	}
+}
+
+func TestPaletteList_GroupedSearchFlattens(t *testing.T) {
+	var l PaletteList
+	items := []PaletteItem{
+		testCategorizedItem{title: "gpt-4o", desc: "", category: "OpenAI"},
+		testCategorizedItem{title: "claude-sonnet-4", desc: "", category: "Anthropic"},
+		testCategorizedItem{title: "gemini-2.5-pro", desc: "", category: "Google"},
+	}
+	avail := []bool{true, true, true}
+
+	l.InitGrouped(items, avail)
+
+	if len(l.filtered) != 6 {
+		t.Fatalf("expected 6 items (3 headers + 3 models), got %d", len(l.filtered))
+	}
+
+	typeChars(&l, "gpt")
+
+	if len(l.filtered) != 1 {
+		t.Fatalf("search 'gpt' should match 1 item, got %d", len(l.filtered))
+	}
+
+	if l.filtered[0].Title() != "gpt-4o" {
+		t.Fatalf("search 'gpt' should match gpt-4o, got %s", l.filtered[0].Title())
+	}
+}
+
+func TestPaletteList_MouseWheelScrolling(t *testing.T) {
+	var l PaletteList
+	items := []PaletteItem{
+		testItem{title: "/a", desc: "A"},
+		testItem{title: "/b", desc: "B"},
+		testItem{title: "/c", desc: "C"},
+	}
+	avail := []bool{true, true, true}
+	l.Init(items, avail)
+
+	if l.filtered[l.selected].Title() != "/a" {
+		t.Fatalf("expected /a, got %s", l.filtered[l.selected].Title())
+	}
+
+	l.Update(tea.MouseWheelMsg{Button: tea.MouseWheelDown})
+	if l.filtered[l.selected].Title() != "/b" {
+		t.Fatalf("after wheel down: expected /b, got %s", l.filtered[l.selected].Title())
+	}
+
+	l.Update(tea.MouseWheelMsg{Button: tea.MouseWheelUp})
+	if l.filtered[l.selected].Title() != "/a" {
+		t.Fatalf("after wheel up: expected /a, got %s", l.filtered[l.selected].Title())
+	}
+
+	l.Update(tea.MouseWheelMsg{Button: tea.MouseWheelDown})
+	l.Update(tea.MouseWheelMsg{Button: tea.MouseWheelDown})
+	if l.filtered[l.selected].Title() != "/c" {
+		t.Fatalf("after wheel down 2: expected /c, got %s", l.filtered[l.selected].Title())
+	}
+}
+
+func TestPaletteList_GroupedIndentation(t *testing.T) {
+	var l PaletteList
+	items := []PaletteItem{
+		testCategorizedItem{title: "gpt-4o", desc: "128K ctx", category: "OpenAI"},
+		testCategorizedItem{title: "claude-sonnet-4", desc: "200K ctx", category: "Anthropic"},
+		testCategorizedItem{title: "gpt-4o-mini", desc: "128K ctx", category: "OpenAI"},
+	}
+	avail := []bool{true, true, true}
+
+	l.InitGrouped(items, avail)
+	l.SetSize(100, 50)
+
+	l.Down()
+
+	view := l.View()
+	stripped := stripANSI(view)
+
+	lines := strings.Split(stripped, "\n")
+	var headerLine, modelLine string
+	for _, line := range lines {
+		if (strings.Contains(line, "OpenAI") || strings.Contains(line, "Anthropic")) &&
+			!strings.Contains(line, "gpt-4o") && !strings.Contains(line, "claude-sonnet-4") {
+			headerLine = line
+		}
+		if strings.Contains(line, "gpt-4o-mini") {
+			modelLine = line
+		}
+	}
+
+	if headerLine == "" {
+		t.Fatalf("expected a header line in view, got lines:\n%s", strings.Join(lines, "\n"))
+	}
+	if modelLine == "" {
+		t.Fatalf("expected a model line in view, got lines:\n%s", strings.Join(lines, "\n"))
+	}
+
+	headerContent := strings.TrimPrefix(strings.TrimSuffix(headerLine, "│"), "│")
+	modelContent := strings.TrimPrefix(strings.TrimSuffix(modelLine, "│"), "│")
+
+	headerIndent := len(headerContent) - len(strings.TrimLeft(headerContent, " "))
+	modelIndent := len(modelContent) - len(strings.TrimLeft(modelContent, " "))
+
+	if modelIndent <= headerIndent {
+		t.Fatalf("model line indent (%d) should be greater than header indent (%d)", modelIndent, headerIndent)
+	}
+	if modelIndent-headerIndent != 4 {
+		t.Fatalf("model should have 4 extra spaces of indentation (2 from indentation + 2 from box padding), got %d extra", modelIndent-headerIndent)
 	}
 }
 

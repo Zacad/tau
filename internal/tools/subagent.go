@@ -12,30 +12,79 @@ import (
 	"github.com/adam/tau/internal/types"
 )
 
+// minSubagentTimeout is the minimum timeout enforced for subagents.
+// Prevents the LLM from setting unrealistically short timeouts that would fail
+// on tasks requiring multiple model/tool iterations.
+const minSubagentTimeout = 5 * time.Minute
+
+// subagentDefaultCandidate defines a single fallback model candidate.
+// The system walks through this list in order and uses the first candidate
+// whose provider is registered and model is available.
+type subagentDefaultCandidate struct {
+	// ModelID is the bare model identifier (e.g. "gemma4", "gpt-5.4-mini").
+	ModelID string
+	// Provider is the expected provider name (must match registry).
+	Provider string
+}
+
+// subagentDefaultModels defines the ordered fallback list for subagent execution.
+// Priority: local (free, no auth) → cloud (cost, auth required).
+// Model IDs use substring matching via ResolveModelWithFallback, so bare IDs
+// like "gemma4" will match "gemma4:26b", "gemma4:4b", etc. in the catalog.
+// When no model is specified (via frontmatter or prompt), the system walks
+// through this list and uses the first available candidate.
+var subagentDefaultModels = []subagentDefaultCandidate{
+	// Ollama — local, no auth, no cost
+	{ModelID: "gemma4", Provider: "ollama"},
+	// Anthropic
+	{ModelID: "claude-haiku-4-5", Provider: "anthropic"},
+	// OpenAI
+	{ModelID: "gpt-5.4-mini", Provider: "openai"},
+	// Qwen 3.6 via multiple providers (in priority order)
+	{ModelID: "qwen3.6-plus", Provider: "opencode-zen"},
+	{ModelID: "qwen3.6-plus", Provider: "opencode-go"},
+	{ModelID: "qwen3.6-plus", Provider: "openrouter"},
+}
+
 // SubAgentTool spawns a sub-agent to execute a task.
 type SubAgentTool struct {
-	prov            provider.Provider
-	model           types.Model
-	parentRegistry  *Registry
-	parentToolNames []string
+	prov             provider.Provider
+	model            types.Model
+	provReg          *provider.Registry
+	parentRegistry   *Registry
+	parentToolNames  []string
 	discoveredAgents map[string]*subagent.AgentDefinition
+	defaultTimeout   time.Duration
 }
 
 // NewSubAgentTool creates a new subagent spawn tool.
 // parentRegistry and parentToolNames are used to enforce the tool ceiling
 // and provide tool execution to the sub-agent.
 // discoveredAgents contains user-defined agents from ~/.tau/agents/ and .tau/agents/.
-func NewSubAgentTool(prov provider.Provider, model types.Model, parentRegistry *Registry, parentToolNames []string, discoveredAgents map[string]*subagent.AgentDefinition) *SubAgentTool {
+// provReg is the provider registry used for model resolution — if nil, model
+// resolution falls back to inheriting the parent's provider (legacy behavior).
+// defaultTimeout is the default timeout from config, used when the LLM doesn't specify one.
+func NewSubAgentTool(prov provider.Provider, model types.Model, provReg *provider.Registry, parentRegistry *Registry, parentToolNames []string, discoveredAgents map[string]*subagent.AgentDefinition, defaultTimeout time.Duration) *SubAgentTool {
 	return &SubAgentTool{
 		prov:             prov,
 		model:            model,
+		provReg:          provReg,
 		parentRegistry:   parentRegistry,
 		parentToolNames:  parentToolNames,
 		discoveredAgents: discoveredAgents,
+		defaultTimeout:   defaultTimeout,
 	}
 }
 
 func (t *SubAgentTool) Name() string { return "subagent" }
+
+// UpdateParentModel updates the parent model and provider that subagents
+// inherit when no explicit model is specified. This is called by
+// Session.SetModel so that future subagent spawns use the new parent model.
+func (t *SubAgentTool) UpdateParentModel(prov provider.Provider, model types.Model) {
+	t.prov = prov
+	t.model = model
+}
 
 func (t *SubAgentTool) Description() string {
 	desc := "Launch a sub-agent to handle complex, multi-step tasks autonomously. " +
@@ -96,21 +145,15 @@ type SubAgentParams struct {
 	// SystemPrompt is an optional system prompt for the sub-agent.
 	SystemPrompt string `json:"system_prompt,omitempty" jsonschema:"description=Optional system prompt for the sub-agent"`
 	// Timeout is the maximum duration for the sub-agent to run (optional, default 5m).
-	// Specify as a Go duration string, e.g. "30s", "2m", "10m".
-	Timeout string `json:"timeout,omitempty" jsonschema:"description=Maximum duration for sub-agent (e.g. '30s', '2m', '10m'). Defaults to 5 minutes."`
+	// Specify as a Go duration string, e.g. "5m", "10m", "20m".
+	Timeout string `json:"timeout,omitempty" jsonschema:"description=Maximum duration for sub-agent (e.g. '5m', '10m', '20m'). Omit unless the user explicitly requests a timeout. Defaults to 5 minutes."`
 }
 
 func (t *SubAgentTool) Execute(ctx context.Context, params any) (*types.ToolResult, error) {
 	p := params.(*SubAgentParams)
 
-	model := t.model
-	if p.Model != "" {
-		model = types.Model{
-			ID:       p.Model,
-			Provider: t.model.Provider,
-			API:      t.model.API,
-		}
-	}
+	// Model resolution is handled via resolveSubAgentModel() for each agent branch.
+	// Priority: 1) frontmatter model  2) prompt model  3) parent model  4) defaults
 
 	var timeout time.Duration
 	if p.Timeout != "" {
@@ -125,6 +168,18 @@ func (t *SubAgentTool) Execute(ctx context.Context, params any) (*types.ToolResu
 				}},
 			}, nil
 		}
+	}
+	if timeout <= 0 {
+		if t.defaultTimeout > 0 {
+			timeout = t.defaultTimeout
+		} else {
+			timeout = subagent.DefaultTimeout
+		}
+	}
+	if timeout < minSubagentTimeout {
+		slog.Debug("subagent: enforcing minimum timeout",
+			"requested", timeout, "minimum", minSubagentTimeout)
+		timeout = minSubagentTimeout
 	}
 
 	executor := t.buildExecutor()
@@ -143,6 +198,12 @@ func (t *SubAgentTool) Execute(ctx context.Context, params any) (*types.ToolResu
 
 	var sa *subagent.SubAgent
 	var agentTypeStr string
+	var subProv provider.Provider
+	var subModel types.Model
+	// explicitModelRequested tracks whether the user asked for a specific model
+	// that couldn't be resolved. In that case, we should try defaults before
+	// falling back to the parent model (which may use the wrong provider).
+	explicitModelRequested := p.Model != ""
 
 	if p.AgentName != "" {
 		// User-defined agent
@@ -173,14 +234,17 @@ func (t *SubAgentTool) Execute(ctx context.Context, params any) (*types.ToolResu
 			filteredTools = subTools
 		}
 
-		// Override model if specified in definition
-		agentModel := model
-		if def.Model != "" {
-			agentModel = types.Model{
-				ID:       def.Model,
-				Provider: t.model.Provider,
-				API:      t.model.API,
-			}
+		// Resolve model: frontmatter model takes priority over prompt model
+		var err error
+		subModel, subProv, err = t.resolveSubAgentModel(def.Model, p.Model)
+		if err != nil {
+			return &types.ToolResult{
+				IsError: true,
+				Content: []types.ContentBlock{{
+					Type: "text",
+					Text: fmt.Sprintf("Failed to resolve subagent model: %v", err),
+				}},
+			}, nil
 		}
 
 		systemPrompt := def.SystemPrompt
@@ -188,10 +252,10 @@ func (t *SubAgentTool) Execute(ctx context.Context, params any) (*types.ToolResu
 			systemPrompt = p.SystemPrompt
 		}
 
-		sa = subagent.NewSubAgent(t.prov, subagent.SubAgentOpts{
+		sa = subagent.NewSubAgent(subProv, subagent.SubAgentOpts{
 			Task:            p.Task,
 			SystemPrompt:    systemPrompt,
-			Model:           agentModel,
+			Model:           subModel,
 			Timeout:         timeout,
 			Tools:           filteredTools,
 			ParentToolNames: t.parentToolNames,
@@ -212,11 +276,23 @@ func (t *SubAgentTool) Execute(ctx context.Context, params any) (*types.ToolResu
 			}, nil
 		}
 
+		// Resolve model: prompt model takes priority, then parent model, then defaults
 		var err error
-		sa, err = subagent.NewSubAgentByType(agentType, t.prov, subTools, subagent.SubAgentOpts{
+		subModel, subProv, err = t.resolveSubAgentModel("", p.Model)
+		if err != nil {
+			return &types.ToolResult{
+				IsError: true,
+				Content: []types.ContentBlock{{
+					Type: "text",
+					Text: fmt.Sprintf("Failed to resolve subagent model: %v", err),
+				}},
+			}, nil
+		}
+
+		sa, err = subagent.NewSubAgentByType(agentType, subProv, subTools, subagent.SubAgentOpts{
 			Task:            p.Task,
 			SystemPrompt:    p.SystemPrompt,
-			Model:           model,
+			Model:           subModel,
 			Timeout:         timeout,
 			ParentToolNames: t.parentToolNames,
 			Executor:        executor,
@@ -232,11 +308,23 @@ func (t *SubAgentTool) Execute(ctx context.Context, params any) (*types.ToolResu
 		}
 		agentTypeStr = string(agentType)
 	} else {
-		// No type or agent_name — use general defaults
-		sa = subagent.NewSubAgent(t.prov, subagent.SubAgentOpts{
+		// No type or agent_name — resolve model: prompt → parent → defaults
+		var err error
+		subModel, subProv, err = t.resolveSubAgentModel("", p.Model)
+		if err != nil {
+			return &types.ToolResult{
+				IsError: true,
+				Content: []types.ContentBlock{{
+					Type: "text",
+					Text: fmt.Sprintf("Failed to resolve subagent model: %v", err),
+				}},
+			}, nil
+		}
+
+		sa = subagent.NewSubAgent(subProv, subagent.SubAgentOpts{
 			Task:            p.Task,
 			SystemPrompt:    p.SystemPrompt,
-			Model:           model,
+			Model:           subModel,
 			Timeout:         timeout,
 			Tools:           subTools,
 			ParentToolNames: t.parentToolNames,
@@ -245,10 +333,48 @@ func (t *SubAgentTool) Execute(ctx context.Context, params any) (*types.ToolResu
 		agentTypeStr = ""
 	}
 
+	// Step 4 fallback: try subagent default models list when:
+	// a) the resolved model's provider is not registered/unavailable, OR
+	// b) the user explicitly requested a model but resolution fell through to parent
+	//    (meaning the requested model couldn't be resolved — try defaults before
+	//    using parent, since parent may use a completely different provider).
+	needsDefaultFallback := false
+	if t.provReg != nil {
+		_, providerOK := t.provReg.Get(subModel.Provider)
+		if !providerOK {
+			needsDefaultFallback = true
+		} else if explicitModelRequested && subModel.ID == t.model.ID {
+			// User asked for a specific model but we fell back to parent — try defaults first
+			needsDefaultFallback = true
+			slog.Debug("subagent: requested model couldn't be resolved, trying defaults before parent",
+				"requested", p.Model, "fell_to_parent", subModel.ID)
+		}
+	} else {
+		// No registry — parent provider is the only option
+		needsDefaultFallback = false
+	}
+
+	if needsDefaultFallback {
+		if fallbackModel, fallbackProv, ok := t.trySubagentDefaults(); ok {
+			subModel = fallbackModel
+			subProv = fallbackProv
+			// Re-create the subagent with the fallback model
+			sa = subagent.NewSubAgent(subProv, subagent.SubAgentOpts{
+				Task:            p.Task,
+				SystemPrompt:    t.buildSystemPromptForSubagent(p),
+				Model:           subModel,
+				Timeout:         timeout,
+				Tools:           subTools,
+				ParentToolNames: t.parentToolNames,
+				Executor:        executor,
+			})
+		}
+	}
+
 	slog.Info("subagent: start",
 		"id", sa.ID,
-		"model", model.ID,
-		"provider", model.Provider,
+		"model", subModel.ID,
+		"provider", subModel.Provider,
 		"task_preview", truncateTask(p.Task, 120),
 		"timeout", sa.Timeout,
 	)
@@ -281,6 +407,9 @@ func (t *SubAgentTool) Execute(ctx context.Context, params any) (*types.ToolResu
 	output, _ := json.Marshal(map[string]any{
 		"subagent_id": sa.ID,
 		"type":        agentTypeStr,
+		"model":       subModel.ID,
+		"provider":    subModel.Provider,
+		"timeout":     timeout.String(),
 		"task":        p.Task,
 		"output":      result.Output,
 		"duration":    result.Duration.String(),
@@ -342,6 +471,129 @@ func (t *SubAgentTool) availableAgentNames() []string {
 		}
 	}
 	return names
+}
+
+// buildSystemPromptForSubagent constructs the system prompt for a subagent
+// when re-creating it with a fallback model. Mirrors the prompt-building
+// logic in the Execute method.
+func (t *SubAgentTool) buildSystemPromptForSubagent(p *SubAgentParams) string {
+	return p.SystemPrompt
+}
+
+// resolveSubAgentModel resolves a subagent model using the priority chain:
+// 1. Use model defined in agent frontmatter (agentModel) — resolved via registry
+// 2. Use model specified in prompt (promptModel) — resolved via registry
+// 3. Use parent agent's model (parentModel)
+// 4. Fallback to subagent default models — first available from any registered provider
+//
+// Returns both the resolved Model and the corresponding Provider instance.
+// If provReg is nil, falls back to legacy behavior (inherit parent provider) for
+// custom models — this preserves backward compatibility for unit tests.
+func (t *SubAgentTool) resolveSubAgentModel(agentModel, promptModel string) (types.Model, provider.Provider, error) {
+	// Helper: try to resolve a model pattern via the registry
+	tryResolve := func(pattern string) (types.Model, provider.Provider, bool) {
+		if pattern == "" || t.provReg == nil {
+			return types.Model{}, nil, false
+		}
+		model, err := t.provReg.ResolveModelWithFallback(pattern)
+		if err != nil {
+			slog.Debug("subagent: model resolution failed", "pattern", pattern, "error", err)
+			return types.Model{}, nil, false
+		}
+		prov, ok := t.provReg.Get(model.Provider)
+		if !ok {
+			slog.Debug("subagent: provider not registered for resolved model",
+				"model", model.ID, "provider", model.Provider)
+			return types.Model{}, nil, false
+		}
+		return model, prov, true
+	}
+
+	// Helper: legacy fallback — create model with inherited parent provider.
+	// Only used when provReg is nil (legacy test mode).
+	legacyResolve := func(modelID string) (types.Model, provider.Provider) {
+		return types.Model{
+			ID:       modelID,
+			Provider: t.model.Provider,
+			API:      t.model.API,
+		}, t.prov
+	}
+
+	// Step 1: Use model from agent frontmatter
+	if agentModel != "" {
+		if model, prov, ok := tryResolve(agentModel); ok {
+			slog.Debug("subagent: using agent frontmatter model", "model", model.ID, "provider", model.Provider)
+			return model, prov, nil
+		}
+		// Registry unavailable (provReg is nil) — legacy fallback for tests
+		if t.provReg == nil {
+			model, prov := legacyResolve(agentModel)
+			slog.Debug("subagent: using frontmatter model (legacy fallback)", "model", model.ID)
+			return model, prov, nil
+		}
+		// Registry exists but model resolution failed — return empty so caller
+		// can try trySubagentDefaults with other providers.
+		slog.Debug("subagent: frontmatter model resolution failed, falling through to parent/default",
+			"model", agentModel)
+	}
+
+	// Step 2: Use model specified in prompt
+	if promptModel != "" {
+		if model, prov, ok := tryResolve(promptModel); ok {
+			slog.Debug("subagent: using prompt model", "model", model.ID, "provider", model.Provider)
+			return model, prov, nil
+		}
+		// Registry unavailable (provReg is nil) — legacy fallback for tests
+		if t.provReg == nil {
+			model, prov := legacyResolve(promptModel)
+			slog.Debug("subagent: using prompt model (legacy fallback)", "model", model.ID)
+			return model, prov, nil
+		}
+		// Registry exists but model resolution failed — return empty so caller
+		// can try trySubagentDefaults with other providers.
+		slog.Debug("subagent: prompt model resolution failed, falling through to parent/default",
+			"model", promptModel)
+	}
+
+	// Step 3: Use parent agent's model
+	slog.Debug("subagent: using parent model", "model", t.model.ID, "provider", t.model.Provider)
+	return t.model, t.prov, nil
+
+	// Step 4 (fallback) is handled by the caller — only reached if parent model is also unavailable.
+}
+
+// trySubagentDefaults walks through the subagent default candidates list and
+// returns the first candidate whose provider is registered and model exists.
+func (t *SubAgentTool) trySubagentDefaults() (types.Model, provider.Provider, bool) {
+	if t.provReg == nil {
+		return types.Model{}, nil, false
+	}
+	for _, c := range subagentDefaultModels {
+		// Check provider is registered
+		prov, ok := t.provReg.Get(c.Provider)
+		if !ok {
+			slog.Debug("subagent: skipping default candidate, provider not registered",
+				"model", c.ModelID, "provider", c.Provider)
+			continue
+		}
+		// Try to resolve the model within this provider
+		model, err := t.provReg.ResolveModelWithFallback(c.ModelID)
+		if err != nil {
+			slog.Debug("subagent: skipping default candidate, model not found",
+				"model", c.ModelID, "provider", c.Provider, "error", err)
+			continue
+		}
+		// Verify the resolved model actually belongs to the expected provider
+		if model.Provider != c.Provider {
+			slog.Debug("subagent: skipping default candidate, resolved to different provider",
+				"requested", c.ModelID, "expected_provider", c.Provider,
+				"resolved_provider", model.Provider)
+			continue
+		}
+		slog.Info("subagent: falling back to default model", "model", model.ID, "provider", model.Provider)
+		return model, prov, true
+	}
+	return types.Model{}, nil, false
 }
 
 func truncateTask(s string, max int) string {

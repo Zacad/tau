@@ -56,11 +56,6 @@ func (p *AnthropicProvider) Stream(ctx context.Context, model types.Model, messa
 	}
 
 	headers := p.headers(model)
-	// Extended thinking requires the beta header. Anthropic rejects thinking
-	// requests without it (400 Bad Request).
-	if model.Reasoning && opts.ThinkingLevel != "" && opts.ThinkingLevel != types.ThinkingOff {
-		headers["anthropic-beta"] = "extended-thinking-2025-05-01"
-	}
 
 	httpResp, err := p.httpClient.Do(&Request{
 		Method:  "POST",
@@ -181,6 +176,8 @@ func (p *AnthropicProvider) parseStreamResponse(ctx context.Context, body []byte
 
 		var textAcc textAccum
 		var thinkAcc thinkingAccum
+		toolCalls := make(map[int]*types.ToolCallBlock)
+		toolArgBuffers := make(map[int]string)
 
 		reader := NewSSELineReader(body)
 		for fields, ok := reader.ReadNext(); ok; fields, ok = reader.ReadNext() {
@@ -220,6 +217,19 @@ func (p *AnthropicProvider) parseStreamResponse(ctx context.Context, body []byte
 					} else if blockStart.ContentBlock.Type == "tool_use" {
 						thinkAcc.finish(ctx, ch, msg)
 						textAcc.finish(ctx, ch, msg)
+						args := make(map[string]any)
+						if len(blockStart.ContentBlock.Input) > 0 {
+							_ = json.Unmarshal(blockStart.ContentBlock.Input, &args)
+						}
+						callID := blockStart.ContentBlock.ID
+						if callID == "" {
+							callID = fmt.Sprintf("tool_%d", blockStart.Index)
+						}
+						toolCalls[blockStart.Index] = &types.ToolCallBlock{
+							ID:        callID,
+							Name:      blockStart.ContentBlock.Name,
+							Arguments: args,
+						}
 						sendEvent(ctx, ch, types.StreamEvent{
 							Type:  types.EventToolCallStart,
 							Delta: blockStart.ContentBlock.Name,
@@ -239,13 +249,32 @@ func (p *AnthropicProvider) parseStreamResponse(ctx context.Context, body []byte
 					case "signature_delta":
 						thinkAcc.signature = delta.Delta.Signature
 					case "input_json_delta":
-						// Tool call arguments accumulating
+						if call := toolCalls[delta.Index]; call != nil {
+							toolArgBuffers[delta.Index] += delta.Delta.PartialJSON
+						}
 					}
 				}
 
 			case "content_block_stop":
-				thinkAcc.finish(ctx, ch, msg)
-				textAcc.finish(ctx, ch, msg)
+				var blockStop struct {
+					Index int `json:"index"`
+				}
+				_ = json.Unmarshal([]byte(data), &blockStop)
+				if call := toolCalls[blockStop.Index]; call != nil {
+					if raw := toolArgBuffers[blockStop.Index]; raw != "" {
+						args := make(map[string]any)
+						if err := json.Unmarshal([]byte(raw), &args); err == nil {
+							call.Arguments = args
+						}
+					}
+					msg.Content = append(msg.Content, types.ContentBlock{Type: types.BlockToolCall, ToolCall: call})
+					sendEvent(ctx, ch, types.StreamEvent{Type: types.EventToolCallEnd, Delta: call.Name, Message: msg})
+					delete(toolCalls, blockStop.Index)
+					delete(toolArgBuffers, blockStop.Index)
+				} else {
+					thinkAcc.finish(ctx, ch, msg)
+					textAcc.finish(ctx, ch, msg)
+				}
 
 			case "message_delta":
 				var msgDelta anthropicMessageDelta
@@ -266,7 +295,12 @@ func (p *AnthropicProvider) parseStreamResponse(ctx context.Context, body []byte
 					sendEvent(ctx, ch, types.StreamEvent{
 						Type:    types.EventDone,
 						Message: msg,
-						Usage:   func() *types.Usage { if hasUsage { return &usage }; return nil }(),
+						Usage: func() *types.Usage {
+							if hasUsage {
+								return &usage
+							}
+							return nil
+						}(),
 					})
 				}
 
@@ -325,19 +359,19 @@ func (p *AnthropicProvider) collectFromStream(ch <-chan types.StreamEvent) (*typ
 // Anthropic request/response types
 
 type anthropicRequest struct {
-	Model          string                    `json:"model"`
-	MaxTokens      int                       `json:"max_tokens"`
-	Temperature    float64                   `json:"temperature,omitempty"`
-	Stream         bool                      `json:"stream"`
-	System         string                    `json:"system,omitempty"`
-	Messages       []anthropicMessage        `json:"messages"`
-	Tools          []anthropicTool           `json:"tools,omitempty"`
-	Thinking       *anthropicThinking        `json:"thinking,omitempty"`
-	OutputConfig   *anthropicOutputConfig    `json:"output_config,omitempty"`
+	Model        string                 `json:"model"`
+	MaxTokens    int                    `json:"max_tokens"`
+	Temperature  float64                `json:"temperature,omitempty"`
+	Stream       bool                   `json:"stream"`
+	System       string                 `json:"system,omitempty"`
+	Messages     []anthropicMessage     `json:"messages"`
+	Tools        []anthropicTool        `json:"tools,omitempty"`
+	Thinking     *anthropicThinking     `json:"thinking,omitempty"`
+	OutputConfig *anthropicOutputConfig `json:"output_config,omitempty"`
 }
 
 type anthropicMessage struct {
-	Role    string                 `json:"role"`
+	Role    string                  `json:"role"`
 	Content []anthropicContentBlock `json:"content"`
 }
 
@@ -365,28 +399,31 @@ type anthropicOutputConfig struct {
 }
 
 type anthropicBlockStart struct {
+	Index        int `json:"index"`
 	ContentBlock struct {
-		Type string `json:"type"`
-		Name string `json:"name,omitempty"`
+		Type  string          `json:"type"`
+		ID    string          `json:"id,omitempty"`
+		Name  string          `json:"name,omitempty"`
+		Input json.RawMessage `json:"input,omitempty"`
 	} `json:"content_block"`
 }
 
 type anthropicContentDelta struct {
 	Index int `json:"index,omitempty"`
 	Delta struct {
-		Type     string `json:"type"`
-		Text     string `json:"text,omitempty"`
-		Thinking string `json:"thinking,omitempty"`
-		Signature string `json:"signature,omitempty"`
+		Type        string `json:"type"`
+		Text        string `json:"text,omitempty"`
+		Thinking    string `json:"thinking,omitempty"`
+		Signature   string `json:"signature,omitempty"`
 		PartialJSON string `json:"partial_json,omitempty"`
 	} `json:"delta"`
 }
 
 type anthropicMessageDelta struct {
 	Usage *struct {
-		OutputTokens              int `json:"output_tokens"`
-		CacheCreationInputTokens  int `json:"cache_creation_input_tokens"`
-		CacheReadInputTokens      int `json:"cache_read_input_tokens"`
+		OutputTokens             int `json:"output_tokens"`
+		CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
+		CacheReadInputTokens     int `json:"cache_read_input_tokens"`
 	} `json:"usage,omitempty"`
 }
 

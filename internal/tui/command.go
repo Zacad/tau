@@ -174,7 +174,14 @@ func (r *CommandRegistry) customCommandToCommand(cc customcmd.CustomCommand) Com
 	desc += " [custom]"
 
 	return NewChatCommand(cc.Name, desc, cc.Template, availableIdle, func(m *Model, args string) tea.Cmd {
-		template := customcmd.ProcessTemplate(cc.Template, args)
+		resolver := func(name string) string {
+			skill := m.findSkill(name)
+			if skill == nil {
+				return ""
+			}
+			return fmt.Sprintf("[Skill: %s]\n%s", skill.Name, skill.Content)
+		}
+		template := customcmd.ProcessTemplate(cc.Template, args, resolver)
 		return m.submitPrompt(template)
 	})
 }
@@ -415,12 +422,14 @@ func cmdSession(m *Model, _ string) tea.Cmd {
 type modelPaletteItem struct {
 	title       string
 	description string
+	category    string
 	model       types.Model
 }
 
 func (i modelPaletteItem) Title() string       { return i.title }
 func (i modelPaletteItem) Description() string { return i.description }
-func (i modelPaletteItem) FilterValue() string { return i.title + " " + i.description }
+func (i modelPaletteItem) FilterValue() string { return i.title + " " + i.category + " " + i.description }
+func (i modelPaletteItem) Category() string    { return i.category }
 
 func cmdModel(m *Model, _ string) tea.Cmd {
 	models := m.session.ListModels()
@@ -442,19 +451,21 @@ func cmdModel(m *Model, _ string) tea.Cmd {
 			contextStr = formatContextWindow(mod.ContextWindow)
 		}
 		items[i] = modelPaletteItem{
-			title:       fmt.Sprintf("%s/%s", mod.ID, mod.Provider),
+			title:       mod.ID,
 			description: contextStr,
+			category:    mod.Provider,
 			model:       mod,
 		}
 		avail[i] = true
 	}
 
-	m.palette.OpenWithItems(items, avail, func(item palette.PaletteItem, index int) tea.Cmd {
+	m.palette.OpenWithGroupedItems(items, avail, func(item palette.PaletteItem, index int) tea.Cmd {
 		mi, ok := item.(modelPaletteItem)
 		if !ok {
 			return nil
 		}
-		if err := m.session.SetModel(mi.model.ID); err != nil {
+		canonicalRef := mi.model.Provider + "/" + mi.model.ID
+		if err := m.session.SetModel(canonicalRef); err != nil {
 			m.blocks = append(m.blocks, messageBlock{
 				kind: blockError,
 				text: "Failed to switch model: " + err.Error(),
@@ -464,9 +475,11 @@ func cmdModel(m *Model, _ string) tea.Cmd {
 			m.modelProv = mi.model.Provider
 			m.modelReasoning = mi.model.Reasoning
 			m.thinkingLevel = string(m.session.ThinkingLevel())
+			m.contextWindow = mi.model.ContextWindow
+			m.refreshContext()
 			m.blocks = append(m.blocks, messageBlock{
 				kind: blockAssistantText,
-				text: "Switched to: " + mi.model.ID,
+				text: "Switched to: " + canonicalRef,
 			})
 		}
 		m.invalidateRenderedCache()
@@ -758,6 +771,8 @@ func cmdNew(m *Model, _ string) tea.Cmd {
 	m.lastSetContentPendingLen = 0
 	m.lastSetContentPendingRenderedLen = 0
 	m.lastSetContentBlocksLen = 0
+	m.contextWindow = m.session.Model().ContextWindow
+	m.refreshContext()
 
 	m.sessionID = newID
 	m.sessionName = m.session.Name()

@@ -109,6 +109,23 @@ func (d *delayedProvider) Complete(ctx context.Context, model types.Model, messa
 	return nil, nil
 }
 
+type blockingTool struct {
+	release <-chan struct{}
+}
+
+func (b *blockingTool) Name() string { return "slow" }
+
+func (b *blockingTool) Description() string { return "Slow test tool" }
+
+func (b *blockingTool) Parameters() any { return &testutil.MockToolParams{} }
+
+func (b *blockingTool) ExecutionMode() types.ExecutionMode { return types.ExecutionParallel }
+
+func (b *blockingTool) Execute(ctx context.Context, params any) (*types.ToolResult, error) {
+	<-b.release
+	return &types.ToolResult{Content: []types.ContentBlock{{Type: types.BlockText, Text: "released"}}}, nil
+}
+
 // countingProvider calls fn each time Stream is invoked.
 type countingProvider struct {
 	fn func() []types.StreamEvent
@@ -409,6 +426,47 @@ func TestState_Transitions_ToolExecution(t *testing.T) {
 	}
 	if msgs[2].Role != types.RoleToolResult {
 		t.Errorf("third message role = %v, want tool_result", msgs[2].Role)
+	}
+}
+
+func TestRun_InterruptedToolExecutionAddsToolResults(t *testing.T) {
+	a := newTestAgent()
+	release := make(chan struct{})
+	defer close(release)
+
+	a.tools = tools.NewRegistry()
+	a.tools.Register(&blockingTool{release: release})
+	a.provider = mockProviderWithEvents(types.StreamEvent{Type: types.EventDone, Message: &types.AgentMessage{
+		Role: types.RoleAssistant,
+		Content: []types.ContentBlock{
+			{Type: types.BlockToolCall, ToolCall: &types.ToolCallBlock{
+				ID:        "tc1",
+				Name:      "slow",
+				Arguments: map[string]any{"input": "wait"},
+			}},
+		},
+	}})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Millisecond)
+	defer cancel()
+
+	err := a.Prompt(ctx, "run slow tool")
+	if err == nil {
+		t.Fatal("expected context timeout error")
+	}
+
+	msgs := a.Messages()
+	if len(msgs) != 3 {
+		t.Fatalf("expected user, assistant tool call, and synthetic tool result, got %d: %+v", len(msgs), msgs)
+	}
+	if msgs[2].Role != types.RoleToolResult {
+		t.Fatalf("third message role = %v, want tool_result", msgs[2].Role)
+	}
+	if msgs[2].ToolCallID != "tc1" {
+		t.Errorf("tool result ToolCallID = %q, want tc1", msgs[2].ToolCallID)
+	}
+	if got := msgs[2].Content[0].Text; !strings.Contains(got, "Tool execution interrupted") {
+		t.Errorf("tool result text = %q, want interruption message", got)
 	}
 }
 

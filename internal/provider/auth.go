@@ -7,6 +7,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/adam/tau/internal/config"
 )
 
 // KeyFormat describes the format of an API key value.
@@ -96,17 +98,17 @@ func readAuthKey(path string, providerName string) (string, error) {
 		return "", err
 	}
 
-	var keys map[string]string
+	var keys map[string]config.AuthValue
 	if err := json.Unmarshal(data, &keys); err != nil {
 		return "", err
 	}
 
-	key, ok := keys[providerName]
+	authVal, ok := keys[providerName]
 	if !ok {
 		return "", fmt.Errorf("provider %q not found in auth.json", providerName)
 	}
 
-	return key, nil
+	return authVal.APIKey(), nil
 }
 
 // resolveEnvKey looks up the standard environment variable for a provider.

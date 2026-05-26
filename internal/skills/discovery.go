@@ -10,7 +10,7 @@ import (
 
 // DiscoverSkills finds all skills across the three discovery tiers:
 // built-in (embedded), global (~/.tau/skills/, ~/.agents/skills/),
-// and project (.agents/skills/ walking up from cwd).
+// and project (.tau/skills/, .agents/skills/ walking up from cwd).
 //
 // When the same skill name exists in multiple tiers, project overrides global,
 // and global overrides built-in.
@@ -29,10 +29,10 @@ func DiscoverSkillsWithFS(cwd string, builtinFS fs.FS) []*Skill {
 	loadBuiltinSkills(builtinFS, skills)
 
 	// Tier 2: Global
-	loadGlobalSkills(skills)
+	globalSkillDirs := loadGlobalSkills(skills)
 
 	// Tier 3: Project (highest priority, loaded last so it overrides)
-	loadProjectSkills(cwd, skills)
+	loadProjectSkills(cwd, globalSkillDirs, skills)
 
 	// Convert map to slice
 	result := make([]*Skill, 0, len(skills))
@@ -82,11 +82,12 @@ func loadBuiltinSkills(builtinFS fs.FS, skills map[string]*Skill) {
 }
 
 // loadGlobalSkills loads skills from global directories.
-func loadGlobalSkills(skills map[string]*Skill) {
+// Returns a set of resolved directory paths that were scanned so they can be excluded from project discovery.
+func loadGlobalSkills(skills map[string]*Skill) map[string]bool {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		slog.Warn("unable to determine home directory, skipping global skills", "error", err)
-		return
+		return nil
 	}
 
 	globalDirs := []string{
@@ -94,13 +95,21 @@ func loadGlobalSkills(skills map[string]*Skill) {
 		filepath.Join(home, ".agents", "skills"),
 	}
 
+	scanned := make(map[string]bool)
 	for _, dir := range globalDirs {
+		absDir, err := filepath.Abs(dir)
+		if err == nil {
+			scanned[absDir] = true
+		}
 		loadSkillDirectory(dir, SourceGlobal, skills)
 	}
+
+	return scanned
 }
 
-// loadProjectSkills walks up from cwd looking for .agents/skills/ directories.
-func loadProjectSkills(cwd string, skills map[string]*Skill) {
+// loadProjectSkills walks up from cwd looking for .tau/skills/ and .agents/skills/ directories.
+// It excludes directories that are already covered by global discovery.
+func loadProjectSkills(cwd string, globalSkillDirs map[string]bool, skills map[string]*Skill) {
 	dir, err := filepath.Abs(cwd)
 	if err != nil {
 		slog.Warn("unable to resolve cwd for project skill discovery", "error", err)
@@ -108,8 +117,13 @@ func loadProjectSkills(cwd string, skills map[string]*Skill) {
 	}
 
 	for {
-		skillsDir := filepath.Join(dir, ".agents", "skills")
-		loadSkillDirectory(skillsDir, SourceProject, skills)
+		for _, suffix := range []string{filepath.Join(".tau", "skills"), filepath.Join(".agents", "skills")} {
+			skillsDir := filepath.Join(dir, suffix)
+			absDir, err := filepath.Abs(skillsDir)
+			if err == nil && !globalSkillDirs[absDir] {
+				loadSkillDirectory(skillsDir, SourceProject, skills)
+			}
+		}
 
 		parent := filepath.Dir(dir)
 		if parent == dir {

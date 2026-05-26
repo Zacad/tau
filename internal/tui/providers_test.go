@@ -286,3 +286,81 @@ func TestDiscoverOpenRouterModels_ReturnsPopularModels(t *testing.T) {
 		t.Error("expected google models in list")
 	}
 }
+
+func TestFindProvider_OpenAIOAuth(t *testing.T) {
+	info, ok := findProvider("openai-oauth")
+	if !ok {
+		t.Fatal("findProvider('openai-oauth') not found")
+	}
+	if info.Name != "openai-oauth" {
+		t.Errorf("Name: got %q, want %q", info.Name, "openai-oauth")
+	}
+	if info.DisplayName != "ChatGPT Plus/Pro (OAuth)" {
+		t.Errorf("DisplayName: got %q, want %q", info.DisplayName, "ChatGPT Plus/Pro (OAuth)")
+	}
+	if info.RequiresAPIKey {
+		t.Error("RequiresAPIKey: got true, want false")
+	}
+	if info.BaseURL != "https://chatgpt.com/backend-api" {
+		t.Errorf("BaseURL: got %q, want %q", info.BaseURL, "https://chatgpt.com/backend-api")
+	}
+	if info.TestConnection == nil {
+		t.Error("TestConnection should not be nil")
+	}
+	if info.DiscoverModels == nil {
+		t.Error("DiscoverModels should not be nil")
+	}
+}
+
+func TestListAvailableProviders_IncludesOpenAIOAuth(t *testing.T) {
+	providers := listAvailableProviders()
+
+	found := false
+	for _, p := range providers {
+		if p.Name == "openai-oauth" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("expected openai-oauth provider in list")
+	}
+}
+
+func TestTestOpenAIOAuth_NoAPIKey(t *testing.T) {
+	err := testOpenAIOAuth("")
+	if err != nil {
+		t.Fatalf("expected no error for OAuth provider without API key, got: %v", err)
+	}
+}
+
+func TestTestOpenAIOAuth_WithAPIKey(t *testing.T) {
+	err := testOpenAIOAuth("some-key")
+	if err == nil {
+		t.Fatal("expected error when API key is passed to OAuth provider")
+	}
+}
+
+func TestDiscoverOpenAIOAuthModels(t *testing.T) {
+	models, err := discoverOpenAIOAuthModels("")
+	if err != nil {
+		t.Fatalf("discoverOpenAIOAuthModels: %v", err)
+	}
+	if len(models) == 0 {
+		t.Fatal("expected Codex models")
+	}
+
+	expectedModels := []string{"gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex", "gpt-5.3-codex-spark", "gpt-5.2"}
+	for _, expected := range expectedModels {
+		found := false
+		for _, m := range models {
+			if m == expected {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("expected model %q in OAuth model list", expected)
+		}
+	}
+}

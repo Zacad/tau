@@ -83,12 +83,12 @@ type Session struct {
 	mu sync.Mutex
 
 	// Subsystems
-	ag       *agent.Agent
-	sess     *tausession.Session // nil in ephemeral mode
-	provReg  *provider.Registry
-	prov     provider.Provider
-	model    types.Model
-	toolReg  *tools.Registry
+	ag        *agent.Agent
+	sess      *tausession.Session // nil in ephemeral mode
+	provReg   *provider.Registry
+	prov      provider.Provider
+	model     types.Model
+	toolReg   *tools.Registry
 	allSkills []*skills.Skill
 
 	// State
@@ -126,6 +126,103 @@ func isProviderEnabled(cfg *config.Config, name string) bool {
 	return *pc.Enabled
 }
 
+// resolveModelResult holds the outcome of model resolution.
+type resolveModelResult struct {
+	model  types.Model
+	prov   provider.Provider
+	source string // "cli", "session", "config", "fallback", "none"
+}
+
+// resolveModel selects a model using deterministic priority:
+// explicit pattern > config default > deterministic connected fallback.
+// Only considers models whose providers are actually registered.
+// When explicitCLI is true and the pattern fails, no fallback is attempted
+// (the user explicitly requested this model, so silence is worse than failure).
+func resolveModel(pattern string, cfgDefault string, provReg *provider.Registry, explicitCLI bool) resolveModelResult {
+	// Step 1: Try the explicit/resumed pattern
+	if pattern != "" {
+		model, err := provReg.ResolveModelWithFallback(pattern)
+		if err == nil {
+			if prov, ok := provReg.Get(model.Provider); ok {
+				source := "cli"
+				if !explicitCLI {
+					source = "session"
+				}
+				return resolveModelResult{model: model, prov: prov, source: source}
+			}
+			slog.Warn("resolved model provider not registered",
+				"pattern", pattern, "provider", model.Provider)
+		} else {
+			slog.Warn("failed to resolve model pattern", "pattern", pattern, "error", err)
+		}
+		// Explicit CLI request failed — do not silently fall back
+		if explicitCLI {
+			slog.Info("explicit CLI model unavailable, no fallback — use /connect or /model")
+			return resolveModelResult{}
+		}
+	}
+
+	// Step 2: Try config default
+	if cfgDefault != "" {
+		model, err := provReg.ResolveModelWithFallback(cfgDefault)
+		if err == nil {
+			if prov, ok := provReg.Get(model.Provider); ok {
+				slog.Info("using config default model", "model", model.ID, "provider", model.Provider)
+				return resolveModelResult{model: model, prov: prov, source: "config"}
+			}
+			slog.Warn("config default model provider not registered",
+				"default_model", cfgDefault, "provider", model.Provider)
+		} else {
+			slog.Warn("failed to resolve config default model", "default_model", cfgDefault, "error", err)
+		}
+	}
+
+	// Step 3: Deterministic fallback to connected providers only
+	connected := provReg.ListProviders()
+	connectedSet := make(map[string]bool, len(connected))
+	for _, p := range connected {
+		connectedSet[p] = true
+	}
+
+	allModels := provReg.Models().ListAll()
+	var candidates []types.Model
+	for _, m := range allModels {
+		if connectedSet[m.Provider] {
+			candidates = append(candidates, m)
+		}
+	}
+
+	if len(candidates) > 0 {
+		// Sort deterministically: by provider, then by model ID
+		sort.Slice(candidates, func(i, j int) bool {
+			if candidates[i].Provider != candidates[j].Provider {
+				return candidates[i].Provider < candidates[j].Provider
+			}
+			return candidates[i].ID < candidates[j].ID
+		})
+
+		// Prefer ollama (local, no auth) but deterministically
+		for _, m := range candidates {
+			if m.Provider == "ollama" {
+				if prov, ok := provReg.Get(m.Provider); ok {
+					slog.Info("auto-selected fallback model", "model", m.ID, "provider", m.Provider)
+					return resolveModelResult{model: m, prov: prov, source: "fallback"}
+				}
+			}
+		}
+
+		// Use first connected model deterministically
+		first := candidates[0]
+		if prov, ok := provReg.Get(first.Provider); ok {
+			slog.Info("auto-selected fallback model", "model", first.ID, "provider", first.Provider)
+			return resolveModelResult{model: first, prov: prov, source: "fallback"}
+		}
+	}
+
+	slog.Info("no model available, session created without model — use /connect to add a provider")
+	return resolveModelResult{}
+}
+
 // CreateSession creates a new SDK session, initializing all subsystems.
 //
 // Lifecycle:
@@ -143,11 +240,15 @@ func CreateSession(ctx context.Context, opts SessionOptions) (*Session, error) {
 	cfg, err := config.LoadConfig("")
 	if err != nil {
 		slog.Warn("config load failed, using defaults", "error", err)
-		cfg = &config.Config{}
+		defaultCfg := config.DefaultConfig()
+		cfg = &defaultCfg
 	}
 
 	// 2. Create provider registry and register providers
 	provReg := provider.NewRegistry()
+
+	// Load full model catalog from models.dev (falls back to built-in minimal models)
+	provider.LoadFromCatalog(ctx, provReg.Models(), provider.CachePath())
 
 	// Check for mock provider URL (for E2E testing)
 	var mockURL string
@@ -175,6 +276,7 @@ func CreateSession(ctx context.Context, opts SessionOptions) (*Session, error) {
 	} else {
 		// Try to register each provider (skip if no auth available or disabled in config)
 		registerOpenAI(provReg, cfg)
+		registerOpenAIOAuth(provReg, cfg)
 		registerAnthropic(provReg, cfg)
 		registerGoogle(provReg, cfg)
 		registerOllama(provReg, cfg)
@@ -188,110 +290,12 @@ func CreateSession(ctx context.Context, opts SessionOptions) (*Session, error) {
 		provReg.SetDefaultModel(cfg.DefaultModel)
 	}
 
-	// 3. Resolve model
-	var model types.Model
-	var prov provider.Provider
-
-	if mockURL != "" {
-		// Use mock model directly — skip normal resolution
-		model = types.Model{
-			ID:       "mock-model",
-			Name:     "mock-model",
-			Provider: "mock",
-			API:      "openai-completions",
-			BaseURL:  mockURL,
-		}
-		prov, _ = provReg.Get("mock")
-	} else {
-		modelPattern := opts.Model
-		explicitModel := modelPattern != ""
-		if modelPattern == "" {
-			modelPattern = cfg.DefaultModel
-		}
-
-		// If still no model specified, auto-select from available models
-		if modelPattern == "" {
-			available := provReg.Models().ListAll()
-			if len(available) > 0 {
-				// Prefer ollama models (local, no auth needed), then pick first
-				for _, m := range available {
-					if m.Provider == "ollama" {
-						modelPattern = m.ID
-						break
-					}
-				}
-				// Fallback to first available if no ollama
-				if modelPattern == "" {
-					modelPattern = available[0].ID
-				}
-				slog.Info("no model specified, auto-selected", "model", modelPattern)
-			}
-		}
-
-		if modelPattern != "" {
-			var err error
-			model, err = provReg.ResolveModelWithFallback(modelPattern)
-			if err != nil {
-				slog.Warn("failed to resolve model", "pattern", modelPattern, "error", err)
-				model = types.Model{}
-			} else {
-				// Get provider instance for the resolved model
-				var ok bool
-				prov, ok = provReg.Get(model.Provider)
-				if !ok {
-					// Configured default model's provider is not available and no explicit model was requested — fall back to auto-selection
-					if !explicitModel && modelPattern == cfg.DefaultModel {
-						available := provReg.Models().ListAll()
-						if len(available) > 0 {
-							for _, m := range available {
-								if m.Provider == "ollama" {
-									modelPattern = m.ID
-									break
-								}
-							}
-							if modelPattern == "" {
-								modelPattern = available[0].ID
-							}
-							slog.Info("default model provider unavailable, auto-selected fallback", "model", modelPattern)
-
-							model, err = provReg.ResolveModelWithFallback(modelPattern)
-							if err == nil {
-								prov, _ = provReg.Get(model.Provider)
-							}
-						}
-					} else {
-						slog.Warn("no provider registered for model", "model", model.ID, "provider", model.Provider)
-						model = types.Model{}
-						prov = nil
-					}
-				}
-			}
-		}
-
-		if model.ID == "" {
-			slog.Info("no model available, session created without model — use /connect to add a provider")
-		}
-	}
-
-	// 4. Discover skills and compose system prompt
-	discovered := skills.DiscoverSkills(opts.WorkingDir)
-	skillsXML := skills.FormatForPrompt(discovered)
-	systemPrompt := defaultSystemPrompt + "\n\n" + skillsXML
-
-	// 5. Create tool registry with options
-	toolOpts := []tools.RegistryOption{}
-	if len(opts.ToolAllowlist) > 0 {
-		toolOpts = append(toolOpts, tools.WithAllowlist(opts.ToolAllowlist))
-	}
-	if opts.ReadOnly {
-		toolOpts = append(toolOpts, tools.WithReadOnly(true))
-	}
-	toolReg := tools.NewRegistry(toolOpts...)
-	registerBuiltinTools(toolReg, opts.WorkingDir, cfg, prov, model)
-
-	// 6. Create or resume session
+	// 3. Create or resume session (needed before model resolution for resume priority)
 	var sess *tausession.Session
 	var msgCount int
+	// recentSessionModel holds the model from the most recent session file
+	// (captured before creating a new session, used as fallback)
+	var recentSessionModel, recentSessionProvider string
 
 	if opts.Ephemeral {
 		slog.Info("session created in ephemeral mode")
@@ -309,10 +313,22 @@ func CreateSession(ctx context.Context, opts SessionOptions) (*Session, error) {
 			return nil, fmt.Errorf("resume session: %w", err)
 		}
 	} else {
-		// Create new session
+		// Create new session — but first check the most recent session file for its model
 		sessDir, err := config.SessionsDir(opts.WorkingDir)
 		if err != nil {
 			return nil, fmt.Errorf("get sessions dir: %w", err)
+		}
+
+		// Check most recent existing session file before creating new one
+		if latest, _ := config.LatestSessionFile(sessDir); latest != "" {
+			if prevSess, err := tausession.OpenSession(latest); err == nil {
+				recentSessionModel = prevSess.CurrentModel()
+				recentSessionProvider = prevSess.CurrentProvider()
+				prevSess.Close()
+				if recentSessionModel != "" {
+					slog.Info("found model from most recent session", "model", recentSessionModel, "provider", recentSessionProvider)
+				}
+			}
 		}
 
 		sess, err = tausession.CreateSession(sessDir, opts.WorkingDir, "", "")
@@ -322,7 +338,72 @@ func CreateSession(ctx context.Context, opts SessionOptions) (*Session, error) {
 		msgCount = 0
 	}
 
-	// 7. Create agent (only if provider is available)
+	// 4. Resolve model
+	// Priority: explicit CLI model > resumed session model > most recent session model > config default > auto fallback
+	var model types.Model
+	var prov provider.Provider
+
+	if mockURL != "" {
+		// Use mock model directly — skip normal resolution
+		model = types.Model{
+			ID:       "mock-model",
+			Name:     "mock-model",
+			Provider: "mock",
+			API:      "openai-completions",
+			BaseURL:  mockURL,
+		}
+		prov, _ = provReg.Get("mock")
+	} else {
+		modelPattern := opts.Model
+		explicitModel := modelPattern != ""
+
+		// If no explicit model, try resumed session model
+		if !explicitModel && sess != nil {
+			sessionModel := sess.CurrentModel()
+			sessionProvider := sess.CurrentProvider()
+			if sessionModel != "" {
+				if sessionProvider != "" {
+					modelPattern = sessionProvider + "/" + sessionModel
+				} else {
+					modelPattern = sessionModel
+				}
+				slog.Info("using model from resumed session", "model", sessionModel, "provider", sessionProvider)
+			}
+		}
+
+		// If still no model and we created a new session, try the most recent session file's model
+		if !explicitModel && modelPattern == "" && opts.Continue == false && opts.SessionPath == "" && recentSessionModel != "" {
+			if recentSessionProvider != "" {
+				modelPattern = recentSessionProvider + "/" + recentSessionModel
+			} else {
+				modelPattern = recentSessionModel
+			}
+			slog.Info("using model from most recent session file", "model", recentSessionModel, "provider", recentSessionProvider)
+		}
+
+		result := resolveModel(modelPattern, cfg.DefaultModel, provReg, explicitModel)
+		model = result.model
+		prov = result.prov
+	}
+
+	// 5. Discover skills and compose system prompt
+	discovered := skills.DiscoverSkills(opts.WorkingDir)
+	skillsXML := skills.FormatForPrompt(discovered)
+	systemPrompt := buildSystemPromptWithSkills(defaultSystemPrompt, skillsXML, len(discovered) > 0)
+
+	// 5. Create tool registry with options
+	var toolReg *tools.Registry
+	toolOpts := []tools.RegistryOption{}
+	if len(opts.ToolAllowlist) > 0 {
+		toolOpts = append(toolOpts, tools.WithAllowlist(opts.ToolAllowlist))
+	}
+	if opts.ReadOnly {
+		toolOpts = append(toolOpts, tools.WithReadOnly(true))
+	}
+	toolReg = tools.NewRegistry(toolOpts...)
+	registerBuiltinTools(toolReg, opts.WorkingDir, cfg, prov, model, provReg)
+
+	// 6. Create agent (only if provider is available)
 	var ag *agent.Agent
 	if prov != nil {
 		ag = newAgent(systemPrompt, opts.WorkingDir, prov, model, toolReg)
@@ -414,15 +495,24 @@ func (s *Session) Continue(ctx context.Context) error {
 // The message will be processed after the current tool call batch completes.
 // Non-blocking — safe to call from any goroutine.
 func (s *Session) Steer(message string) error {
+	if s.ag == nil {
+		return fmt.Errorf("no agent available")
+	}
 	return s.ag.Steer(message)
 }
 
 // Subscribe registers a listener function that will be called for every
 // agent event. Returns an unsubscribe function.
 //
+// Listeners receive canonical typed tool payloads. Use AgentEvent.LegacyData()
+// inside the listener if you need the pre-064 map[string]any tool payload shape.
+//
 // Listeners are called synchronously on the emitting goroutine.
 // Long-running listeners will block the agent loop.
 func (s *Session) Subscribe(listener func(types.AgentEvent)) func() {
+	if s.ag == nil {
+		return func() {}
+	}
 	return s.ag.Subscribe(listener)
 }
 
@@ -435,7 +525,7 @@ func (s *Session) Compact(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if s.ephemeral || s.sess == nil {
+	if s.ephemeral || s.sess == nil || s.ag == nil {
 		return nil // nothing to compact
 	}
 
@@ -460,8 +550,12 @@ func (s *Session) Compact(ctx context.Context) error {
 	}
 
 	// Write compaction entry to session
-	compactionEntry := tausession.BuildCompactionEntry(plan.FirstKeptID, plan.TokensTotal, summary)
-	if err := s.sess.Append(types.EntryCompaction, compactionEntry); err != nil {
+	compactionData := tausession.CompactionData{
+		FirstKeptEntryID: plan.FirstKeptID,
+		TokensBefore:     plan.TokensTotal,
+		Summary:          summary,
+	}
+	if err := s.sess.Append(types.EntryCompaction, compactionData); err != nil {
 		return fmt.Errorf("write compaction entry: %w", err)
 	}
 
@@ -504,25 +598,56 @@ func (s *Session) SetModel(pattern string) error {
 
 	s.model = model
 
-	// Persist model change to session
+	// Persist model change to session (provider + model ID)
 	if !s.ephemeral && s.sess != nil {
-		if err := s.sess.SetModel(model.ID); err != nil {
+		if err := s.sess.SetModel(model.ID, model.Provider); err != nil {
 			return fmt.Errorf("persist model change: %w", err)
 		}
 	}
 
-	// Persist model to config as new default
-	s.cfg.DefaultModel = model.ID
-	if err := config.SaveConfig(s.cfg, s.cfgPath); err != nil {
+	// Reload config to avoid clobbering /connect or /disconnect changes made after SDK startup
+	latestCfg, err := config.LoadConfig(s.cfgPath)
+	if err != nil {
+		slog.Warn("failed to reload config before saving default model, using cached", "error", err)
+		latestCfg = s.cfg
+	}
+	// Persist model to config as new default (canonical provider/modelID)
+	latestCfg.DefaultModel = model.Provider + "/" + model.ID
+	if err := config.SaveConfig(latestCfg, s.cfgPath); err != nil {
 		slog.Warn("failed to save default model to config", "error", err)
 	}
+	// Update cached config
+	s.cfg = latestCfg
 
 	// Switch provider and model on the existing agent (preserves messages).
 	// This matches PI's architecture where model is a mutable state property,
 	// not an agent recreation — conversation history is fully preserved.
 	if prov, ok := s.provReg.Get(model.Provider); ok {
 		s.prov = prov
-		if s.ag != nil {
+
+		if s.ag == nil {
+			// Agent was nil (e.g., resumed without provider) — create it now.
+			ag := newAgent(s.systemP, s.cwd, prov, model, s.toolReg)
+			s.ag = ag
+
+			// Load session messages into the new agent
+			if s.sess != nil {
+				sessionMsgs := s.sess.Messages()
+				if len(sessionMsgs) > 0 {
+					ag.SetMessages(sessionMsgs)
+					slog.Debug("sdk: loaded session messages into recovered agent", "count", len(sessionMsgs))
+				}
+			}
+
+			// Set thinking level for the new model
+			if s.sess != nil {
+				level := s.sess.GetThinkingLevelForModel(model.ID)
+				ag.SetThinkingLevel(level)
+				slog.Debug("sdk: set thinking level on agent recovery", "model", model.ID, "level", level)
+			}
+
+			slog.Info("sdk: created agent during SetModel recovery", "model", model.ID, "provider", model.Provider)
+		} else {
 			s.ag.SetModel(prov, model)
 
 			// Set thinking level for the new model
@@ -531,6 +656,12 @@ func (s *Session) SetModel(pattern string) error {
 				s.ag.SetThinkingLevel(level)
 				slog.Debug("sdk: set thinking level for new model", "model", model.ID, "level", level)
 			}
+		}
+
+		// Update subagent tool so future subagent spawns inherit the new parent model.
+		if sat, ok := s.toolReg.Get("subagent").(*tools.SubAgentTool); ok {
+			sat.UpdateParentModel(prov, model)
+			slog.Debug("sdk: updated subagent tool parent model", "model", model.ID, "provider", model.Provider)
 		}
 	}
 
@@ -627,8 +758,38 @@ func (s *Session) ResumeSession(filePath string) error {
 	// Restore usage
 	s.usage = resumedSess.Usage()
 
-	// Restore thinking level for the current model
-	if s.ag != nil && s.model.ID != "" {
+	// Restore model/provider from resumed session, falling back to config default
+	sessionModel := resumedSess.CurrentModel()
+	sessionProvider := resumedSess.CurrentProvider()
+	var modelPattern string
+	if sessionModel != "" {
+		if sessionProvider != "" {
+			modelPattern = sessionProvider + "/" + sessionModel
+		} else {
+			modelPattern = sessionModel
+		}
+	}
+
+	// Use shared resolution: resumed session model > config default > fallback
+	result := resolveModel(modelPattern, s.cfg.DefaultModel, s.provReg, false)
+	if result.model.ID != "" {
+		s.model = result.model
+		s.prov = result.prov
+		if s.ag != nil {
+			s.ag.SetModel(result.prov, result.model)
+			level := resumedSess.GetThinkingLevelForModel(result.model.ID)
+			s.ag.SetThinkingLevel(level)
+		}
+
+		// Update subagent tool with new parent model
+		if sat, ok := s.toolReg.Get("subagent").(*tools.SubAgentTool); ok {
+			sat.UpdateParentModel(result.prov, result.model)
+		}
+
+		slog.Info("sdk: restored model on resume",
+			"model", result.model.ID, "provider", result.model.Provider, "source", result.source)
+	} else if s.ag != nil && s.model.ID != "" {
+		// No model available — restore thinking level for current model
 		level := resumedSess.GetThinkingLevelForModel(s.model.ID)
 		s.ag.SetThinkingLevel(level)
 		slog.Debug("sdk: restored thinking level on resume", "model", s.model.ID, "level", level)
@@ -727,6 +888,9 @@ func (s *Session) Messages() []types.AgentMessage {
 
 // AgentState returns the current agent loop state.
 func (s *Session) AgentState() agent.AgentState {
+	if s.ag == nil {
+		return ""
+	}
 	return s.ag.State()
 }
 
@@ -813,6 +977,23 @@ func (s *Session) RegisterProvider(prov provider.Provider, providerName string, 
 
 	// Register provider
 	s.provReg.Register(prov)
+
+	// For OAuth OpenAI provider, use pre-configured Codex models
+	if providerName == "openai-oauth" {
+		codexModels := provider.CodexModels()
+		for i := range codexModels {
+			codexModels[i].Provider = providerName
+			codexModels[i].BaseURL = baseURL
+			s.provReg.Models().Register(codexModels[i])
+			slog.Debug("model registered at runtime", "model", codexModels[i].ID, "provider", providerName)
+		}
+
+		slog.Info("provider registered at runtime",
+			"provider", providerName,
+			"models", len(codexModels),
+		)
+		return nil
+	}
 
 	// Register models
 	for _, modelID := range modelIDs {
@@ -1008,6 +1189,17 @@ func (s *Session) ResetOverflow() {
 
 // --- Internal helpers ---
 
+// buildSystemPromptWithSkills composes the system prompt with explicit skill usage instructions.
+// This ensures models (especially GPT variants) know to actively use available skills.
+func buildSystemPromptWithSkills(basePrompt, skillsXML string, hasSkills bool) string {
+	if !hasSkills {
+		return basePrompt
+	}
+	return basePrompt + "\n\n" + skillsXML + "\n\n" + `Skills provide specialized instructions and workflows for specific tasks.
+When a user request matches a skill's description, use that skill to guide your approach.
+Skills are listed above with their name and description — reference them to determine the appropriate workflow.`
+}
+
 // newAgent creates a configured agent instance.
 func newAgent(systemPrompt, cwd string, prov provider.Provider, model types.Model, toolReg *tools.Registry) *agent.Agent {
 	return agent.New(agent.Options{
@@ -1032,6 +1224,64 @@ func registerOpenAI(reg *provider.Registry, cfg *config.Config) {
 		return
 	}
 	reg.Register(provider.NewOpenAIProvider(key))
+}
+
+// registerOpenAIOAuth tries to load stored OAuth credentials and register the
+// OpenAI OAuth (ChatGPT Plus/Pro subscription) provider on startup.
+func registerOpenAIOAuth(reg *provider.Registry, cfg *config.Config) {
+	if !isProviderEnabled(cfg, "openai-oauth") {
+		slog.Debug("skipping openai-oauth provider (disabled in config)")
+		return
+	}
+
+	authPath := config.AuthPath("")
+	store, err := config.LoadAuth(authPath)
+	if err != nil {
+		slog.Debug("skipping openai-oauth provider (cannot load auth)", "error", err)
+		return
+	}
+
+	authVal, exists := store["openai-oauth"]
+	if !exists || !authVal.IsOAuth() {
+		slog.Debug("skipping openai-oauth provider (no OAuth credentials stored)")
+		return
+	}
+
+	creds := provider.OAuthCredentials{
+		AccessToken:  authVal.Access,
+		RefreshToken: authVal.Refresh,
+		Expires:      authVal.Expires,
+		AccountID:    authVal.AccountID,
+	}
+
+	persist := func(creds provider.OAuthCredentials) error {
+		store, err := config.LoadAuth(authPath)
+		if err != nil {
+			return fmt.Errorf("load auth for persistence: %w", err)
+		}
+		store["openai-oauth"] = config.AuthValue{
+			Type:      "oauth",
+			Access:    creds.AccessToken,
+			Refresh:   creds.RefreshToken,
+			Expires:   creds.Expires,
+			AccountID: creds.AccountID,
+		}
+		return config.SaveAuth(store, authPath)
+	}
+
+	prov := provider.NewOpenAIOAuthProviderWithPersist(creds, persist)
+	reg.Register(prov)
+
+	codexModels := provider.CodexModels()
+	for i := range codexModels {
+		codexModels[i].Provider = "openai-oauth"
+		reg.Models().Register(codexModels[i])
+	}
+
+	slog.Info("openai-oauth provider registered from stored credentials",
+		"models", len(codexModels),
+		"account_id", authVal.AccountID,
+	)
 }
 
 // registerAnthropic tries to resolve auth and register the Anthropic provider.
@@ -1149,12 +1399,12 @@ type openAIModelsResponse struct {
 }
 
 type openAIModelEntry struct {
-	ID            string  `json:"id"`
-	Object        string  `json:"object"`
-	Created       int64   `json:"created"`
-	OwnedBy       string  `json:"owned_by"`
-	ContextLength *int    `json:"context_length,omitempty"`
-	MaxTokens     *int    `json:"max_tokens,omitempty"`
+	ID            string `json:"id"`
+	Object        string `json:"object"`
+	Created       int64  `json:"created"`
+	OwnedBy       string `json:"owned_by"`
+	ContextLength *int   `json:"context_length,omitempty"`
+	MaxTokens     *int   `json:"max_tokens,omitempty"`
 }
 
 // discoverOpenAICompatModels fetches models from an OpenAI-compatible /v1/models
@@ -1353,6 +1603,9 @@ func (s *Session) persistNewMessages() error {
 // refreshUsage accumulates any untracked usage from the agent's last turn.
 // Must be called with s.mu held.
 func (s *Session) refreshUsage() {
+	if s.ag == nil {
+		return
+	}
 	lastUsage := s.ag.LastUsage()
 	if lastUsage.TotalTokens > 0 {
 		s.usage = addUsage(s.usage, lastUsage)
@@ -1438,7 +1691,7 @@ func addUsage(a, b types.Usage) types.Usage {
 }
 
 // registerBuiltinTools registers all built-in tools into the registry.
-func registerBuiltinTools(reg *tools.Registry, cwd string, cfg *config.Config, prov provider.Provider, model types.Model) {
+func registerBuiltinTools(reg *tools.Registry, cwd string, cfg *config.Config, prov provider.Provider, model types.Model, provReg *provider.Registry) {
 	const defaultMaxChars = 50000
 	reg.Register(tools.NewReadTool(cwd, defaultMaxChars))
 	reg.Register(tools.NewWriteTool(cwd, defaultMaxChars))
@@ -1455,7 +1708,7 @@ func registerBuiltinTools(reg *tools.Registry, cwd string, cfg *config.Config, p
 		agents := subagent.AllAgents(cwd)
 		slog.Debug("discovered agents", "count", len(agents), "cwd", cwd)
 
-		reg.Register(tools.NewSubAgentTool(prov, model, reg, reg.Names(), agents))
+		reg.Register(tools.NewSubAgentTool(prov, model, provReg, reg, reg.Names(), agents, cfg.SubagentTimeout))
 	}
 }
 

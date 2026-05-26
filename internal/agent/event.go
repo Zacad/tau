@@ -16,6 +16,9 @@ var listenerIDSeq int64
 // Subscribe registers a listener function that will be called for every
 // agent event. Returns an unsubscribe function.
 //
+// Listeners receive canonical typed tool payloads. Use AgentEvent.LegacyData()
+// inside the listener if you need the pre-064 map[string]any tool payload shape.
+//
 // Listeners are called synchronously on the emitting goroutine.
 // Long-running listeners will block the agent loop.
 func (a *Agent) Subscribe(listener func(types.AgentEvent)) func() {

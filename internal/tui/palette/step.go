@@ -52,6 +52,16 @@ func ListStep(title, prompt string, options []ListOption) Step {
 	return Step{kind: StepKindList, title: title, prompt: prompt, options: options}
 }
 
+// ConditionalListStep creates a list step that can be skipped based on prior results.
+func ConditionalListStep(title, prompt string, options []ListOption, skipIf func(map[string]any) bool, skipValue string) Step {
+	return Step{kind: StepKindList, title: title, prompt: prompt, options: options, skipIf: skipIf, skipValue: skipValue}
+}
+
+// ConditionalTaskStep creates a task step that can be skipped based on prior results.
+func ConditionalTaskStep(title string, task StepTaskFunc, skipIf func(map[string]any) bool, skipValue string) Step {
+	return Step{kind: StepKindTask, title: title, task: task, skipIf: skipIf, skipValue: skipValue}
+}
+
 // InputStep creates a step that prompts for text input.
 func InputStep(title, prompt, placeholder string) Step {
 	return Step{kind: StepKindInput, title: title, prompt: prompt, placeholder: placeholder}
@@ -209,7 +219,7 @@ func (r *StepRunner) skipIfNeeded() {
 	if step == nil {
 		return
 	}
-	if step.kind == StepKindInput && step.skipIf != nil && step.skipIf(r.results) {
+	if step.skipIf != nil && step.skipIf(r.results) {
 		if step.skipValue != "" {
 			r.results[step.ResultKey()] = step.skipValue
 		}

@@ -114,6 +114,14 @@ var (
 	spinnerStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("81"))
 
+	// Context usage warning: yellow for >70% context usage.
+	contextWarningStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("220"))
+
+	// Context usage error: red for >90% context usage.
+	contextErrorStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("196"))
+
 	// Queued message style: dimmed yellow prefix with truncated content.
 	queuedMessageStyle = lipgloss.NewStyle().
 				Foreground(lipgloss.Color("242")).

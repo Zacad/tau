@@ -401,12 +401,15 @@ func TestSession_SetModel(t *testing.T) {
 	}
 	defer s.Close()
 
-	if err := s.SetModel("gpt-4o"); err != nil {
+	if err := s.SetModel("gpt-4o", "openai"); err != nil {
 		t.Fatalf("SetModel: %v", err)
 	}
 
 	if s.CurrentModel() != "gpt-4o" {
 		t.Errorf("model mismatch: got %s, want gpt-4o", s.CurrentModel())
+	}
+	if s.CurrentProvider() != "openai" {
+		t.Errorf("provider mismatch: got %s, want openai", s.CurrentProvider())
 	}
 }
 
@@ -510,5 +513,71 @@ func TestSession_OpenNonExistent(t *testing.T) {
 	_, err := OpenSession("/nonexistent/session.jsonl")
 	if err == nil {
 		t.Fatal("expected error for non-existent file")
+	}
+}
+
+func TestSession_ModelRestoreWithProvider(t *testing.T) {
+	dir := testutil.TempDir(t)
+	sessionDir := filepath.Join(dir, "sessions")
+
+	// Phase 1: Create session and set model with provider
+	s1, err := CreateSession(sessionDir, "/test", "test", "")
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+
+	if err := s1.SetModel("claude-sonnet-4-20250514", "anthropic"); err != nil {
+		t.Fatalf("SetModel: %v", err)
+	}
+
+	filePath := s1.File()
+	s1.Close()
+
+	// Phase 2: Reopen and verify model + provider restored
+	s2, err := OpenSession(filePath)
+	if err != nil {
+		t.Fatalf("OpenSession: %v", err)
+	}
+	defer s2.Close()
+
+	if s2.CurrentModel() != "claude-sonnet-4-20250514" {
+		t.Errorf("model not restored: got %q, want claude-sonnet-4-20250514", s2.CurrentModel())
+	}
+	if s2.CurrentProvider() != "anthropic" {
+		t.Errorf("provider not restored: got %q, want anthropic", s2.CurrentProvider())
+	}
+}
+
+func TestSession_ModelRestoreBackwardCompat(t *testing.T) {
+	dir := testutil.TempDir(t)
+	sessionDir := filepath.Join(dir, "sessions")
+
+	// Create session and manually write old-format model change (no provider)
+	s1, err := CreateSession(sessionDir, "/test", "test", "")
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+
+	// Write old-format entry directly (simulating old session files)
+	oldData := ModelChangeData{ModelID: "gpt-4o", Provider: ""}
+	if err := s1.Append(types.EntryModelChange, oldData); err != nil {
+		t.Fatalf("Append old format: %v", err)
+	}
+
+	filePath := s1.File()
+	s1.Close()
+
+	// Reopen and verify model is restored, provider is empty
+	s2, err := OpenSession(filePath)
+	if err != nil {
+		t.Fatalf("OpenSession: %v", err)
+	}
+	defer s2.Close()
+
+	if s2.CurrentModel() != "gpt-4o" {
+		t.Errorf("model not restored: got %q, want gpt-4o", s2.CurrentModel())
+	}
+	if s2.CurrentProvider() != "" {
+		t.Errorf("provider should be empty for old format, got %q", s2.CurrentProvider())
 	}
 }

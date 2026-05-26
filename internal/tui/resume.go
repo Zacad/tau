@@ -327,6 +327,7 @@ func handleResumeComplete(m *Model) {
 		m.modelProv = "none"
 	}
 	m.thinkingLevel = string(m.session.ThinkingLevel())
+	m.contextWindow = mod.ContextWindow
 	m.sessionID = m.session.ID()
 	m.sessionName = m.session.Name()
 
@@ -354,6 +355,7 @@ func handleResumeComplete(m *Model) {
 
 	// Set usage from session
 	m.usage = m.session.Usage()
+	m.refreshContext()
 
 	m.updateViewport()
 }

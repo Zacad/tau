@@ -110,6 +110,27 @@ Result returned to user
 | `encoding/json` (stdlib) | Session serialization, config | Built-in |
 | `bufio` (stdlib) | JSONL streaming I/O | Built-in |
 
+### 1.6 Canonical Tool Lifecycle Contract
+
+Tau’s tool-call rendering depends on a canonical lifecycle contract at the agent boundary rather than provider-specific event behavior.
+
+The contract distinguishes between:
+
+- model-requested tool calls,
+- finalized tool-call metadata,
+- tool execution progress,
+- tool result production.
+
+Key requirements:
+
+- Stable tool call correlation by ID, not just tool name.
+- Provider differences normalized before TUI consumption.
+- Native vs inferred completion metadata preserved where provider streams are asymmetric.
+- Central sanitization/truncation for display-oriented tool metadata.
+- Compatibility preserved for existing event consumers during migration.
+
+This enables consistent TUI visibility for compact metadata such as file paths, commands, and URLs across OpenAI, Ollama, Anthropic, and Google.
+
 ---
 
 ## 2. Package Structure
@@ -499,7 +520,7 @@ Parent                          Subagent
   - **Opt-out**: `custom_entry` (non-LLM-visible) for logging/metadata only
   - Configurable via `SubAgentResultOptions{LLMVisible: bool}`
 - **Execution model**: Subagent runs **synchronously** — parent agent loop waits (with configurable timeout, default 5 minutes)
-- **Timeout handling**: If subagent exceeds timeout, it is cancelled via `context.CancelFunc`, error returned to parent
+- **Timeout handling**: If subagent exceeds timeout, it is cancelled via `context.CancelFunc`, error returned to parent. The effective timeout floor is 5 minutes so model-generated short values do not cancel multi-step delegated work too early.
 - **Streaming visibility**: Parent can optionally receive subagent events for real-time progress display via forwarded channel
 - **Error isolation**: Subagent failures are caught and returned as `SubAgentResult{Success: false, Error: ...}` — parent continues unaffected
 
@@ -764,7 +785,7 @@ This pattern handles **interleaving** — reasoning can arrive before, during, o
 |---|---|---|---|
 | OpenAI-compat (Ollama, OpenRouter, OpenCode, llama.cpp) | `reasoning_content`, `reasoning`, `reasoning_text` (first non-empty) | Implicit on first non-empty reasoning delta | Stores field name for round-trip |
 | Anthropic | `content_block_start` → `thinking` / `redacted_thinking` | Explicit event-driven | `signature_delta` for integrity |
-| OpenAI Responses | `reasoning` in delta | Implicit | N/A |
+| OpenAI Responses | reasoning summary delta plus provider-native encrypted reasoning when requested | Implicit | Native `rs_...` items are not persisted today |
 
 For OpenAI-compatible providers, multiple field names are checked to avoid duplication (e.g., chutes.ai returns both `reasoning_content` and `reasoning` with identical content — only the first is used).
 
@@ -788,6 +809,7 @@ When converting assistant messages back to API format for follow-up requests, `B
 | Provider | Round-Trip Behavior |
 |---|---|
 | OpenAI-compat | Thinking text is NOT sent back — OpenAI Chat Completions API doesn't accept thinking blocks in follow-up messages |
+| OpenAI Responses | Thinking text is NOT sent back. Tool calls are replayed with `call_id` but without provider item `id` (`fc_...`) because native paired `rs_...` reasoning items are not persisted. |
 | Anthropic | Thinking blocks sent as `{type: "thinking", thinking: "...", signature: "..."}` — signature required for integrity |
 | Anthropic (redacted) | Redacted thinking sent as `{type: "redacted_thinking", data: "<opaque payload>"}` |
 | OpenRouter | Provider-dependent — some forward thinking, some don't |
@@ -1342,7 +1364,7 @@ Tau uses **bubbletea v2** for the TUI with a **viewport + textarea** layout. The
 │  ▸ Follow-up question                       │
 │                                             │
 ├─────────────────────────────────────────────┤
-│  Footer: model · turns · tokens · cost      │
+│  Footer: model · turns · ctx:12.3%/200k · tokens · cost      │
 ├─────────────────────────────────────────────┤
 │  > Type a message...                        │
 │                                             │
@@ -1450,10 +1472,12 @@ IDLE ──Enter/submit──► STREAMING ──AgentEnd/PromptDone──► ID
 | `Ctrl+D` | Quit (when input is empty) |
 | `Ctrl+C` | Abort current response (double-tap to exit) |
 | `Esc` | Clear input |
-| `PgUp/PgDn` | Scroll viewport |
-| `Mouse wheel` | Scroll viewport |
+| `PgUp/PgDn` | Scroll viewport (when input is not focused) |
+| `Mouse wheel` | Scroll viewport (always, regardless of focus) |
 | `Mouse click+drag` | Select text in viewport (auto-scrolls at edges) |
 | `Mouse release` | Copy selected text to clipboard |
+
+**Focus-gated routing:** Keyboard events are routed to the focused component only. When the prompt textarea is focused (default), keyboard events affect the input only — they do not scroll the chat viewport. Mouse wheel events always scroll the viewport regardless of keyboard focus. This matches the pattern used in PI (focused component receives input exclusively) and OpenCode (ScrollView ignores scroll keys when INPUT/TEXTAREA has focus).
 
 ### 11.6.1 Mouse Selection
 

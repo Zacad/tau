@@ -18,23 +18,43 @@ type PaletteItem interface {
 	FilterValue() string
 }
 
+type PaletteItemCategory interface {
+	PaletteItem
+	Category() string
+}
+
 type PaletteList struct {
-	items       []PaletteItem
-	avail       []bool
-	selected    int
-	search      textinput.Model
-	filtered    []PaletteItem
+	items        []PaletteItem
+	avail        []bool
+	selected     int
+	search       textinput.Model
+	filtered     []PaletteItem
 	filteredAvail []bool
-	positions   [][]int
-	done        bool
-	cancelled   bool
-	result      PaletteItem
-	resultIndex int
-	width       int
-	height      int
+	positions    [][]int
+	done         bool
+	cancelled    bool
+	result       PaletteItem
+	resultIndex  int
+	width        int
+	height       int
+
+	grouped      bool
+	categories   []string
+	itemToGroup  []int
+	filteredCat  []string
 }
 
 func (l *PaletteList) Init(items []PaletteItem, avail []bool) {
+	l.grouped = false
+	l.init(items, avail)
+}
+
+func (l *PaletteList) InitGrouped(items []PaletteItem, avail []bool) {
+	l.grouped = true
+	l.init(items, avail)
+}
+
+func (l *PaletteList) init(items []PaletteItem, avail []bool) {
 	l.items = items
 	l.avail = avail
 	l.selected = 0
@@ -51,7 +71,50 @@ func (l *PaletteList) Init(items []PaletteItem, avail []bool) {
 	l.search.SetValue("")
 	l.search.Focus()
 
+	if l.grouped {
+		l.buildGroups()
+	}
+
 	l.filterItems("")
+}
+
+func (l *PaletteList) buildGroups() {
+	categoryMap := make(map[string]int)
+	var categories []string
+	itemToGroup := make([]int, len(l.items))
+
+	for i, item := range l.items {
+		cat := ""
+		if ci, ok := item.(PaletteItemCategory); ok {
+			cat = ci.Category()
+		}
+		if cat == "" {
+			cat = "Other"
+		}
+		if idx, exists := categoryMap[cat]; exists {
+			itemToGroup[i] = idx
+		} else {
+			idx := len(categories)
+			categoryMap[cat] = idx
+			categories = append(categories, cat)
+			itemToGroup[i] = idx
+		}
+	}
+
+	sort.SliceStable(categories, func(i, j int) bool {
+		return categories[i] < categories[j]
+	})
+
+	remap := make(map[int]int)
+	for newIdx, oldCat := range categories {
+		remap[categoryMap[oldCat]] = newIdx
+	}
+	for i := range itemToGroup {
+		itemToGroup[i] = remap[itemToGroup[i]]
+	}
+
+	l.categories = categories
+	l.itemToGroup = itemToGroup
 }
 
 func (l *PaletteList) Update(msg tea.Msg) tea.Cmd {
@@ -69,6 +132,15 @@ func (l *PaletteList) Update(msg tea.Msg) tea.Cmd {
 			return nil
 		case "esc":
 			l.Cancel()
+			return nil
+		}
+	case tea.MouseWheelMsg:
+		if msg.Button == tea.MouseWheelUp {
+			l.Up()
+			return nil
+		}
+		if msg.Button == tea.MouseWheelDown {
+			l.Down()
 			return nil
 		}
 	}
@@ -96,10 +168,13 @@ func (l *PaletteList) View() string {
 
 	visible := l.getVisibleCommands()
 	for _, item := range visible {
-		isSelected := item.idx == l.selected
-		positions := l.positions[item.idx]
-		line := renderItem(item.item, isSelected, item.avail, positions)
-		lines = append(lines, line)
+		if item.isHeader {
+			lines = append(lines, renderCategoryHeader(item.category))
+		} else {
+			positions := l.positions[item.idx]
+			line := renderItem(item.item, item.isSelected, item.avail, positions, l.grouped)
+			lines = append(lines, line)
+		}
 	}
 
 	content := strings.Join(lines, "\n")
@@ -175,13 +250,18 @@ func (l *PaletteList) SelectedItem() PaletteItem {
 
 func (l *PaletteList) filterItems(query string) {
 	if query == "" {
+		if l.grouped {
+			l.buildGroupedList()
+		} else {
 		l.filtered = make([]PaletteItem, len(l.items))
 		copy(l.filtered, l.items)
 		l.filteredAvail = make([]bool, len(l.avail))
 		copy(l.filteredAvail, l.avail)
 		l.positions = make([][]int, len(l.items))
+		l.filteredCat = make([]string, len(l.items))
 		for i := range l.items {
 			l.positions[i] = nil
+		}
 		}
 	} else {
 		type scored struct {
@@ -208,14 +288,54 @@ func (l *PaletteList) filterItems(query string) {
 		l.filtered = make([]PaletteItem, 0, len(scoredItems))
 		l.filteredAvail = make([]bool, 0, len(scoredItems))
 		l.positions = make([][]int, 0, len(scoredItems))
+		l.filteredCat = make([]string, 0, len(scoredItems))
 		for _, sc := range scoredItems {
 			l.filtered = append(l.filtered, sc.item)
 			l.filteredAvail = append(l.filteredAvail, sc.avail)
 			l.positions = append(l.positions, sc.positions)
+			l.filteredCat = append(l.filteredCat, "")
 		}
 	}
 
 	l.ensureSelectableSelection()
+}
+
+func (l *PaletteList) buildGroupedList() {
+	type groupItem struct {
+		item  PaletteItem
+		avail bool
+		origIdx int
+	}
+
+	groups := make(map[int][]groupItem)
+	for i, item := range l.items {
+		g := l.itemToGroup[i]
+		groups[g] = append(groups[g], groupItem{item: item, avail: l.avail[i], origIdx: i})
+	}
+
+	l.filtered = nil
+	l.filteredAvail = nil
+	l.positions = nil
+	l.filteredCat = nil
+
+	for catIdx := range len(l.categories) {
+		items := groups[catIdx]
+		if len(items) == 0 {
+			continue
+		}
+
+		l.filtered = append(l.filtered, nil)
+		l.filteredAvail = append(l.filteredAvail, false)
+		l.positions = append(l.positions, nil)
+		l.filteredCat = append(l.filteredCat, l.categories[catIdx])
+
+		for _, gi := range items {
+			l.filtered = append(l.filtered, gi.item)
+			l.filteredAvail = append(l.filteredAvail, gi.avail)
+			l.positions = append(l.positions, nil)
+			l.filteredCat = append(l.filteredCat, "")
+		}
+	}
 }
 
 func (l *PaletteList) ensureSelectableSelection() {
@@ -249,9 +369,12 @@ func (l *PaletteList) selectNextAvailable() {
 }
 
 type visibleItem struct {
-	item PaletteItem
-	avail bool
-	idx   int
+	item        PaletteItem
+	avail       bool
+	idx         int
+	isHeader    bool
+	category    string
+	isSelected  bool
 }
 
 func (l *PaletteList) getVisibleCommands() []visibleItem {
@@ -259,16 +382,16 @@ func (l *PaletteList) getVisibleCommands() []visibleItem {
 		return nil
 	}
 
-	visibleCount := min(len(l.filtered), MaxVisible)
+	totalLines := len(l.filtered)
 
 	start := 0
 	if l.selected >= MaxVisible {
 		start = l.selected - MaxVisible + 1
 	}
-	end := start + visibleCount
-	if end > len(l.filtered) {
-		end = len(l.filtered)
-		start = end - visibleCount
+	end := start + MaxVisible
+	if end > totalLines {
+		end = totalLines
+		start = end - MaxVisible
 		if start < 0 {
 			start = 0
 		}
@@ -276,15 +399,32 @@ func (l *PaletteList) getVisibleCommands() []visibleItem {
 
 	result := make([]visibleItem, 0, end-start)
 	for i := start; i < end; i++ {
-		result = append(result, visibleItem{item: l.filtered[i], avail: l.filteredAvail[i], idx: i})
+		result = append(result, visibleItem{
+			item:       l.filtered[i],
+			avail:      l.filteredAvail[i],
+			idx:        i,
+			isHeader:   l.filtered[i] == nil,
+			category:   l.filteredCat[i],
+			isSelected: i == l.selected,
+		})
 	}
 	return result
 }
 
-func renderItem(item PaletteItem, selected bool, avail bool, positions []int) string {
+func renderCategoryHeader(category string) string {
+	return "  " + CategoryHeaderStyle.Render(category)
+}
+
+func renderItem(item PaletteItem, selected bool, avail bool, positions []int, indented bool) string {
 	prefix := "  "
 	if selected {
 		prefix = CursorStyle.Render("> ")
+	}
+	if indented {
+		prefix = "    "
+		if selected {
+			prefix = CursorStyle.Render(">   ")
+		}
 	}
 
 	titleStr := item.Title()

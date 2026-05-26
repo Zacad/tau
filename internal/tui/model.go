@@ -7,16 +7,17 @@ import (
 	"strings"
 	"time"
 
-	tea "charm.land/bubbletea/v2"
 	"charm.land/bubbles/v2/spinner"
 	"charm.land/bubbles/v2/textarea"
 	"charm.land/bubbles/v2/viewport"
+	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
 	"github.com/adam/tau/internal/sdk"
+	"github.com/adam/tau/internal/session"
 	"github.com/adam/tau/internal/skills"
-	"github.com/adam/tau/internal/types"
 	"github.com/adam/tau/internal/tui/palette"
+	"github.com/adam/tau/internal/types"
 	"github.com/charmbracelet/glamour"
 )
 
@@ -30,8 +31,8 @@ var bouncingDots = spinner.Spinner{
 type modelState int
 
 const (
-	stateIdle    modelState = iota // Waiting for user input
-	stateStreaming                 // Agent is responding
+	stateIdle      modelState = iota // Waiting for user input
+	stateStreaming                   // Agent is responding
 )
 
 // Debounce interval for streaming markdown re-rendering.
@@ -71,21 +72,29 @@ type Model struct {
 	pendingBuilder *strings.Builder
 	pendingKind    blockType
 
-	// pendingToolIndex tracks the index of the in-progress tool call block.
-	// Set to -1 when no tool call is pending.
-	pendingToolIndex int
+	// pendingToolIndex tracks the index of the most recent in-progress tool call
+	// block for legacy no-ID events. ID-aware events are tracked in
+	// pendingToolIndexes by stable tool call ID.
+	// Set to -1 when no legacy tool call is pending.
+	pendingToolIndex   int
+	pendingToolIndexes map[string]int
 
 	// Debounced streaming markdown render state.
-	pendingRendered    string                  // last glamour-rendered output of pending content
-	pendingRenderedLen int                     // length of pendingBuilder when last rendered
-	lastRenderTime     time.Time               // timestamp of last glamour render
-	glamourRenderer    *glamour.TermRenderer   // reused renderer instance
+	pendingRendered    string                // last glamour-rendered output of pending content
+	pendingRenderedLen int                   // length of pendingBuilder when last rendered
+	lastRenderTime     time.Time             // timestamp of last glamour render
+	glamourRenderer    *glamour.TermRenderer // reused renderer instance
 
 	// Turn tracking.
 	turnCount int
 
 	// Cached usage from the last completed turn.
 	usage types.Usage
+
+	// Cached context usage for footer display.
+	contextWindow int
+	contextTokens int
+	contextKnown  bool
 
 	// Spinner for working indicator in footer.
 	spinner       spinner.Model
@@ -102,14 +111,14 @@ type Model struct {
 	commandRegistry *CommandRegistry
 
 	// Command palette
-	paletteActive bool
-	palette       CommandPalette
-	paletteInputResult string
+	paletteActive        bool
+	palette              CommandPalette
+	paletteInputResult   string
 	paletteConfirmPrompt string
-	paletteTaskTitle string
-	paletteTaskFunc palette.TaskFunc
-	paletteMessageTitle string
-	paletteMessageBody string
+	paletteTaskTitle     string
+	paletteTaskFunc      palette.TaskFunc
+	paletteMessageTitle  string
+	paletteMessageBody   string
 
 	// Multi-step command state
 	multiStepCommandName string
@@ -118,7 +127,7 @@ type Model struct {
 	lastViewportUpdate time.Time
 
 	// Finalized block render cache.
-	renderedCache     string
+	renderedCache      string
 	renderedCacheValid bool
 
 	// Tracks pending builder length at last SetContent call.
@@ -187,25 +196,28 @@ func NewModel(session *sdk.Session) *Model {
 	sessionID := session.ID()
 	sessionName := session.Name()
 	thinkingLevel := string(session.ThinkingLevel())
+	contextWindow := mod.ContextWindow
 
 	r, _ := NewRenderer(80)
 	m := &Model{
-		session:        session,
-		viewport:       vp,
-		input:          ta,
-		state:          stateIdle,
-		modelName:      modelName,
-		modelProv:      modelProv,
-		modelReasoning: modelReasoning,
-		thinkingLevel:  thinkingLevel,
-		cwd:            cwd,
-		sessionID:      sessionID,
-		sessionName:    sessionName,
-		pendingBuilder: new(strings.Builder),
-		pendingToolIndex: -1,
-		spinner:        spinner.New(spinner.WithSpinner(bouncingDots)),
-		glamourRenderer: r,
-		commandRegistry: NewCommandRegistry(),
+		session:            session,
+		viewport:           vp,
+		input:              ta,
+		state:              stateIdle,
+		modelName:          modelName,
+		modelProv:          modelProv,
+		modelReasoning:     modelReasoning,
+		thinkingLevel:      thinkingLevel,
+		cwd:                cwd,
+		sessionID:          sessionID,
+		sessionName:        sessionName,
+		pendingBuilder:     new(strings.Builder),
+		pendingToolIndex:   -1,
+		pendingToolIndexes: make(map[string]int),
+		spinner:            spinner.New(spinner.WithSpinner(bouncingDots)),
+		glamourRenderer:    r,
+		commandRegistry:    NewCommandRegistry(),
+		contextWindow:      contextWindow,
 	}
 
 	_ = m.commandRegistry.LoadCustomCommands(cwd, EmbeddedCommands())
@@ -226,6 +238,9 @@ func NewModel(session *sdk.Session) *Model {
 			m.promptHistory = mergePromptsIntoHistory(m.promptHistory, filePrompts)
 		}
 	}
+
+	// Initialize context usage from existing messages.
+	m.refreshContext()
 
 	return m
 }
@@ -290,6 +305,7 @@ func (m *Model) resetForTurn() {
 	m.pendingBuilder.Reset()
 	m.pendingKind = 0
 	m.pendingToolIndex = -1
+	m.pendingToolIndexes = make(map[string]int)
 	m.pendingRendered = ""
 	m.pendingRenderedLen = 0
 	m.lastRenderTime = time.Time{}
@@ -306,6 +322,50 @@ func (m *Model) captureUsage() {
 		return
 	}
 	m.usage = m.session.Usage()
+}
+
+// formatTokens formats token counts for display (matches PI footer style).
+func formatTokens(count int) string {
+	if count < 1000 {
+		return fmt.Sprintf("%d", count)
+	}
+	if count < 10000 {
+		return fmt.Sprintf("%.1fk", float64(count)/1000)
+	}
+	if count < 1000000 {
+		return fmt.Sprintf("%dk", count/1000)
+	}
+	if count < 10000000 {
+		return fmt.Sprintf("%.1fM", float64(count)/1000000)
+	}
+	return fmt.Sprintf("%dM", count/1000000)
+}
+
+// refreshContext updates cached context usage from session messages.
+// Must be called outside View() to avoid deadlock with agent goroutine.
+func (m *Model) refreshContext() {
+	if m.session == nil || m.contextWindow <= 0 {
+		m.contextKnown = false
+		m.contextTokens = 0
+		return
+	}
+	msgs := m.session.Messages()
+	if len(msgs) == 0 {
+		m.contextKnown = true
+		m.contextTokens = 0
+		return
+	}
+	m.contextTokens = estimateMessagesTokens(msgs)
+	m.contextKnown = true
+}
+
+// estimateMessagesTokens sums estimated token counts across messages.
+func estimateMessagesTokens(msgs []types.AgentMessage) int {
+	total := 0
+	for _, msg := range msgs {
+		total += session.EstimateTokens(msg)
+	}
+	return total
 }
 
 // updateViewport refreshes the viewport with current rendered content.
@@ -515,6 +575,7 @@ func (m *Model) renderPendingMarkdown() {
 		m.lastRenderTime = time.Now()
 	}
 }
+
 // flushPending moves the pending builder content into a finalized block.
 func (m *Model) flushPending() {
 	if m.pendingBuilder.Len() > 0 {
@@ -522,7 +583,7 @@ func (m *Model) flushPending() {
 			kind: m.pendingKind,
 			text: m.pendingBuilder.String(),
 		}
-	if m.pendingKind == blockAssistantText {
+		if m.pendingKind == blockAssistantText {
 			block.isFinalized = true
 			block.renderedMarkdown = RenderMarkdown(block.text, m.width)
 		}
@@ -618,7 +679,14 @@ func (m *Model) processEvent(e types.AgentEvent) tea.Cmd {
 		} else {
 			errMsg = "unknown error"
 		}
-		// If a tool call is pending, mark it as failed.
+		// If tool calls are pending, mark them as failed.
+		for _, idx := range m.pendingToolIndexes {
+			if idx >= 0 && idx < len(m.blocks) {
+				m.blocks[idx].toolSt = toolError
+				m.blocks[idx].toolErr = errMsg
+			}
+		}
+		m.pendingToolIndexes = make(map[string]int)
 		if m.pendingToolIndex >= 0 && m.pendingToolIndex < len(m.blocks) {
 			m.blocks[m.pendingToolIndex].toolSt = toolError
 			m.blocks[m.pendingToolIndex].toolErr = errMsg
@@ -632,27 +700,58 @@ func (m *Model) processEvent(e types.AgentEvent) tea.Cmd {
 
 	case types.AgentEventToolExecStart:
 		m.flushPending()
-		name := "…"
+		name, args, callID := toolLifecycleDisplayData(e.Data)
 		m.blocks = append(m.blocks, messageBlock{
 			kind:     blockToolCall,
+			toolID:   callID,
 			toolName: name,
+			toolArgs: args,
 			toolSt:   toolPending,
 		})
-		m.pendingToolIndex = len(m.blocks) - 1
+		idx := len(m.blocks) - 1
+		if callID != "" {
+			if m.pendingToolIndexes == nil {
+				m.pendingToolIndexes = make(map[string]int)
+			}
+			m.pendingToolIndexes[callID] = idx
+		} else {
+			m.pendingToolIndex = idx
+		}
 
 	case types.AgentEventToolExecEnd:
-		if m.pendingToolIndex >= 0 && m.pendingToolIndex < len(m.blocks) {
-			m.blocks[m.pendingToolIndex].toolSt = toolSuccess
-			if data, ok := e.Data.(map[string]any); ok {
-				if n, ok := data["tool"].(string); ok && n != "" {
-					m.blocks[m.pendingToolIndex].toolName = n
-				}
-				if a, ok := data["args"].(string); ok {
-					m.blocks[m.pendingToolIndex].toolArgs = a
-				}
+		name, args, callID := toolLifecycleDisplayData(e.Data)
+		idx := -1
+		if callID != "" && m.pendingToolIndexes != nil {
+			if pendingIdx, ok := m.pendingToolIndexes[callID]; ok {
+				idx = pendingIdx
+				delete(m.pendingToolIndexes, callID)
 			}
 		}
-		m.pendingToolIndex = -1
+		if idx < 0 && m.pendingToolIndex >= 0 && m.pendingToolIndex < len(m.blocks) {
+			idx = m.pendingToolIndex
+			m.pendingToolIndex = -1
+		}
+		if idx >= 0 && idx < len(m.blocks) {
+			m.blocks[idx].toolSt = toolSuccess
+			if name != "" && name != "…" {
+				m.blocks[idx].toolName = name
+			}
+			if callID != "" {
+				m.blocks[idx].toolID = callID
+			}
+			if args != "" {
+				m.blocks[idx].toolArgs = args
+			}
+		} else {
+			m.flushPending()
+			m.blocks = append(m.blocks, messageBlock{
+				kind:     blockToolCall,
+				toolID:   callID,
+				toolName: name,
+				toolArgs: args,
+				toolSt:   toolSuccess,
+			})
+		}
 		m.invalidateRenderedCache()
 
 	case types.AgentEventToolProgress:
@@ -664,7 +763,12 @@ func (m *Model) processEvent(e types.AgentEvent) tea.Cmd {
 		toolName := ""
 		content := ""
 		isError := false
-		if data, ok := e.Data.(map[string]any); ok {
+		switch data := e.Data.(type) {
+		case types.ToolResultEvent:
+			toolName = data.ToolName
+			content = data.Content
+			isError = data.IsError
+		case map[string]any:
 			if n, ok := data["tool"].(string); ok {
 				toolName = n
 			}
@@ -723,6 +827,7 @@ func (m *Model) handlePromptDone(interrupted bool) tea.Cmd {
 	m.updateViewport()
 	// Capture usage after prompt completes (s.mu is released by then)
 	m.captureUsage()
+	m.refreshContext()
 
 	if m.session.OverflowCount() > 0 {
 		m.blocks = append(m.blocks, messageBlock{

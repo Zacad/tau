@@ -1,0 +1,69 @@
+# Raport: najlepsze terenowe hulajnogi elektryczne do 10 000 zł w Polsce — maj 2026
+
+## Executive summary
+Najmocniejsze technicznie modele do jazdy po szutrze i leśnych drogach w tym budżecie to konstrukcje dual-motor z 10-calowymi kołami, pełnym zawieszeniem i hydraulicznymi hamulcami lub bardzo dobrym ich odpowiednikiem, a w tej grupie szczególnie wyróżniają się **Hiley Tiger 10 V5 Performance**, **Motus Pro 10 GT** i **KuKirin G2 Master** pod kątem relacji teren/osiągi/cena/dostępność w Polsce ([Hiley](https://hiley.pl/p/tiger-10-v5-performance/), [Motus](https://motusxd.pl/hulajnogi-wyscigowe/1296-pojazd-elektryczny-motus-pro-10-gt-5906954761118.html), [KuKirin](https://www.shop.majway.pl/kukirin-g2-master-2-1000w-20-8ah-52v,3,109628,11499565)).
+Najlepiej udokumentowane niezależnie wzorce jakości jazdy to **Nami Klima** i **VSETT 10+**, ale w Polsce zwykle przekraczają realny budżet 10 000 zł albo nie potwierdzają wiarygodnie 60 km w ostrym teście terenowo-szybkościowym, więc traktuję je jako benchmark, nie główny wybór zakupowy ([Nami test](https://riderguide.com/reviews/nami-klima-review/), [Nami PL cena](https://www.shop.majway.pl/nami-klima-max-2-1000w-28ah-60v,3,109628,11499560), [VSETT test](https://riderguide.com/reviews/vsett-10-review/), [VSETT PL](https://elensport.pl/sklep/produkt/hulajnoga-elektryczna-vsett-10+-lite---208ah-60v/11300.1119.1.1.pl2.0.htm)).
+
+## Założenia i ograniczenia
+Badanie obejmuje **wyłącznie nowe hulajnogi dostępne w Polsce** zgodnie z Twoim zakresem ([shortlista](./02-rynek-polska-shortlista.md)).
+Priorytety oceny to **1) osiągi w terenie, 2) deklarowany lub wiarygodny zasięg minimum 60 km, 3) serwis i niezawodność**, a waga ma niższe znaczenie ([technika](./02-technika-teren-zasieg.md)).
+Największe ograniczenie danych jest takie, że dla części modeli budżetowych i średniej półki polskie sklepy publikują bogate specyfikacje, ale brakuje równie dobrych **niezależnych testów realnego zasięgu i zachowania na szutrze** jak dla Nami, VSETT czy Kaabo ([Rider Guide Nami](https://riderguide.com/reviews/nami-klima-review/), [Rider Guide VSETT](https://riderguide.com/reviews/vsett-10-review/), [Rider Guide Hiley](https://riderguide.com/reviews/hiley-tiger-10-v5-vs-hiley-evo-gtr/), [MAJway KuKirin](https://www.shop.majway.pl/kukirin-g2-master-2-1000w-20-8ah-52v,3,109628,11499565)).
+
+## Co naprawdę ma znaczenie na szutrze i leśnych drogach
+Na takich trasach krytyczne są **10-calowe opony pneumatyczne**, bo większe koło lepiej radzi sobie z kamieniami, koleinami i korzeniami niż małe koła miejskie ([Scooter Guide](https://scooter.guide/electric-scooters-and-wheel-sizes-why-wheel-size-is-important/)).
+Równie ważne jest **pełne zawieszenie** i jakość jego pracy, bo samo „ma amortyzację” nie daje jeszcze dobrej kontroli na nierównościach ([VSETT test](https://riderguide.com/reviews/vsett-10-review/), [Nami test](https://riderguide.com/reviews/nami-klima-review/)).
+Dla tego zastosowania praktycznym standardem jest też **dual motor**, bo poprawia trakcję i podjazdy na luźnej nawierzchni ([VSETT](https://riderguide.com/reviews/vsett-10-review/), [KuKirin](https://www.shop.majway.pl/kukirin-g2-master-2-1000w-20-8ah-52v,3,109628,11499565), [Motus](https://motusxd.pl/hulajnogi-wyscigowe/1296-pojazd-elektryczny-motus-pro-10-gt-5906954761118.html)).
+W tej klasie trzeba też oddzielać **moc nominalną** od marketingowej mocy peak, bo sklepy i producenci często mieszają te wartości ([exploration](./01-exploration.md), [VSETT](https://vsettscooters.com/pages/vsett-10-plus), [Nami](https://www.shop.majway.pl/nami-klima-max-2-1000w-28ah-60v,3,109628,11499560)).
+
+## Rekomendacje główne
+
+### 1. Hiley Tiger 10 V5 Performance — najlepszy balans osiągów terenowych i polskiego wsparcia, ale z najsłabiej potwierdzonym realnym zasięgiem
+Hiley Tiger 10 V5 Performance ma **dwa silniki 2x1200 W**, **pełne hydrauliczne zawieszenie**, **IPX7** i jest dostępny w oficjalnym polskim sklepie za cenę mieszczącą się w budżecie, co czyni go bardzo mocnym kandydatem stricte pod szuter i leśne drogi ([Hiley sklep](https://hiley.pl/p/tiger-10-v5-performance/)).
+Marka ma też **wyłącznego dystrybutora w Polsce**, **serwis door-to-door** i własną kategorię części, co wzmacnia trzeci priorytet: serwis i niezawodność operacyjną po zakupie ([Hiley sklep](https://hiley.pl/p/tiger-10-v5-performance/), [serwis](https://hiley.pl/serwis-gwarancja/), [części](https://hiley.pl/g/czesci-zamienne/)).
+Słaby punkt jest jeden, ale istotny: nie znalazłem tak mocnego, pełnego i porównywalnego niezależnego testu realnego zasięgu/off-road jak dla Nami albo VSETT; publicznie dostępne materiały Rider Guide/ESG o Hiley są skromniejsze ([Rider Guide Hiley](https://riderguide.com/reviews/hiley-tiger-10-v5-vs-hiley-evo-gtr/), [ESG/Hiley](https://electricscooterguide.com/hiley-tiger-10-v5-vs-hiley-evo-gtr/)).
+**Wniosek:** jeśli chcesz najbardziej „terenowy feeling” w budżecie i akceptujesz słabszą jakość niezależnych danych o realnym 60+ km, to to jest mój **najmocniejszy wybór użytkowy** ([Hiley sklep](https://hiley.pl/p/tiger-10-v5-performance/), [Rider Guide Hiley](https://riderguide.com/reviews/hiley-tiger-10-v5-vs-hiley-evo-gtr/)).
+
+### 2. Motus Pro 10 GT — najlepsza opcja, jeśli wysoko cenisz serwis w Polsce
+Motus Pro 10 GT jest oferowany w Polsce z **2x1400 W**, **10-calowymi kołami** i **deklarowanym zasięgiem do 80 km**, przy cenie od **7 499 zł** ([Motus produkt](https://motusxd.pl/hulajnogi-wyscigowe/1296-pojazd-elektryczny-motus-pro-10-gt-5906954761118.html), [Ceneo porównanie](https://www.ceneo.pl/182857189?srsltid=AfmBOoox2LUwwcVeDU3lYqiV_VETZb_5NFIjxFPZVN13OKqTEz2y6gQu)).
+Największa przewaga Motus to najlepiej udokumentowana **sieć autoryzowanych serwisów w Polsce** oraz centralny serwis RG Media, z wieloma punktami w kraju ([lista serwisów](https://motusxd.pl/content/13-autoryzowane-serwisy-motus), [pomoc techniczna](https://motusxd.pl/content/11-pomoc-techniczna)).
+To czyni Motusa najbezpieczniejszym wyborem, jeśli po zakupie chcesz minimalizować ryzyko problemów z obsługą gwarancyjną i częściami ([lista serwisów](https://motusxd.pl/content/13-autoryzowane-serwisy-motus)).
+Słabość tego wyboru jest taka, że publicznych niezależnych testów tej konkretnej wersji pod kątem realnego zasięgu i zachowania na szutrze jest wyraźnie mniej niż dla Nami i VSETT ([technika](./02-technika-teren-zasieg.md)).
+**Wniosek:** to mój **najbezpieczniejszy wybór serwisowy** w tej klasie ([Motus produkt](https://motusxd.pl/hulajnogi-wyscigowe/1296-pojazd-elektryczny-motus-pro-10-gt-5906954761118.html), [lista serwisów](https://motusxd.pl/content/13-autoryzowane-serwisy-motus)).
+
+### 3. KuKirin G2 Master — najlepszy value-for-money do lekkiego terenu i szutru
+KuKirin G2 Master oferuje w Polsce **2x1000 W**, **baterię 52 V 20,8 Ah**, **10-calowe opony bezdętkowe**, **pełną amortyzację typu C** i cenę około **3 899 zł** w MAJway, czyli zdecydowanie niższą niż większość konkurentów ([MAJway](https://www.shop.majway.pl/kukirin-g2-master-2-1000w-20-8ah-52v,3,109628,11499565)).
+Sklep MAJway deklaruje też **2-letnią gwarancję na podzespoły elektroniczne**, a oficjalny sklep KuKirin pokazuje dostępność w Polsce i deklarowany zasięg do **70 km** ([MAJway](https://www.shop.majway.pl/kukirin-g2-master-2-1000w-20-8ah-52v,3,109628,11499565), [KuKirin PL](https://www.kukirin-scooter.pl/products/g2-master)).
+Technicznie to bardzo sensowna hulajnoga na **szuter, leśne drogi i lekki teren**, ale hamulce są **mechaniczne + EBS**, więc ustępuje droższym modelom z lepszą hydrauliką przy szybkiej jeździe i długich zjazdach ([MAJway](https://www.shop.majway.pl/kukirin-g2-master-2-1000w-20-8ah-52v,3,109628,11499565)).
+Drugie zastrzeżenie jest ważne: dane o realnym zasięgu i jakości jazdy są słabiej zweryfikowane niezależnie niż u benchmarków premium ([technika](./02-technika-teren-zasieg.md)).
+**Wniosek:** jeśli zależy Ci na **najlepszym stosunku ceny do terenowych możliwości**, to to jest **najlepszy budżetowy wybór** ([MAJway](https://www.shop.majway.pl/kukirin-g2-master-2-1000w-20-8ah-52v,3,109628,11499565), [KuKirin PL](https://www.kukirin-scooter.pl/products/g2-master)).
+
+## Modele warte uwagi, ale z istotnym „ale”
+
+### Techlife Q7 RSX V2
+Techlife Q7 RSX V2 ma **30 Ah / 52 V**, deklarowany zasięg do **100 km** i bardzo mocne zaplecze serwisowe przez Mobiway, w tym centralny serwis, naprawy elektroniki, baterii i duży magazyn części ([Q7 RSX](https://techlife.pl/produkty/458-techlife-q7-rsx-20-30ah-52v-smart-bms-zasiego-do-100km-5907497215847.html), [serwis Mobiway](https://techlife.pl/content/9-serwis)).
+Problem polega na tym, że w zebranych danych model wygląda bardziej na **mocną hulajnogę uniwersalną/adventure** niż stricte najlepszy wybór terenowy, a część kluczowych parametrów terenowych była gorzej wyeksponowana niż u Hiley, Motus czy KuKirin ([shortlista](./02-rynek-polska-shortlista.md)).
+**Wniosek:** dobry wybór dla kogoś, kto chce bardziej wszechstronność i serwis niż czysty fokus na szuter/las ([Q7 RSX](https://techlife.pl/produkty/458-techlife-q7-rsx-20-30ah-52v-smart-bms-zasiego-do-100km-5907497215847.html), [serwis](https://techlife.pl/content/9-serwis)).
+
+### VSETT 10+
+VSETT 10+ pozostaje bardzo mocnym punktem odniesienia technicznego dzięki **sztywnemu stemowi**, **dobrej kontroli**, **łatwo modulowanym hamulcom** i bardzo dobremu zawieszeniu w niezależnych testach ([Rider Guide VSETT](https://riderguide.com/reviews/vsett-10-review/)).
+Jednocześnie jego **realny testowany zasięg około 54 km** w ostrym scenariuszu nie potwierdza bezpiecznie Twojego progu 60 km, a polskie ceny często wychodzą ponad budżet 10 000 zł ([Rider Guide VSETT](https://riderguide.com/reviews/vsett-10-review/), [ElenSport Lite](https://elensport.pl/sklep/produkt/hulajnoga-elektryczna-vsett-10+-lite---208ah-60v/11300.1119.1.1.pl2.0.htm), [ElenSport Super](https://elensport.pl/sklep/produkt/hulajnoga-elektryczna-vsett-10+-super---256ah-60v/11301.1119.1.1.pl.0.htm)).
+**Wniosek:** świetny benchmark, ale nie mój główny wybór w tym konkretnym briefie ([Rider Guide VSETT](https://riderguide.com/reviews/vsett-10-review/)).
+
+### Nami Klima
+Nami Klima jest prawdopodobnie najlepszą technicznie hulajnogą z całej rozważanej grupy pod względem **zawieszenia, hamulców i kontroli jazdy**, ale wersja Max w Polsce kosztuje **10 899 zł**, czyli przekracza budżet, a niezależny test Rider Guide pokazał **40,2 km** realnego zasięgu w scenariuszu performance ([MAJway Nami](https://www.shop.majway.pl/nami-klima-max-2-1000w-28ah-60v,3,109628,11499560), [Rider Guide Nami](https://riderguide.com/reviews/nami-klima-review/)).
+**Wniosek:** najlepszy benchmark jakości jazdy, ale poza zakresem budżetowo-zasięgowym tego researchu ([Rider Guide Nami](https://riderguide.com/reviews/nami-klima-review/)).
+
+## Ranking końcowy pod Twój use-case
+1. **Hiley Tiger 10 V5 Performance** — najlepszy kandydat użytkowy na mieszane trasy z szutrem i leśnymi drogami, z mocnym polskim wsparciem, ale słabiej zweryfikowanym realnym zasięgiem ([Hiley sklep](https://hiley.pl/p/tiger-10-v5-performance/), [serwis](https://hiley.pl/serwis-gwarancja/), [Rider Guide Hiley](https://riderguide.com/reviews/hiley-tiger-10-v5-vs-hiley-evo-gtr/)).
+2. **Motus Pro 10 GT** — najlepszy kompromis, jeśli priorytetem numer 3 naprawdę ma być serwis i przewidywalna obsługa w Polsce ([Motus produkt](https://motusxd.pl/hulajnogi-wyscigowe/1296-pojazd-elektryczny-motus-pro-10-gt-5906954761118.html), [lista serwisów](https://motusxd.pl/content/13-autoryzowane-serwisy-motus)).
+3. **KuKirin G2 Master** — najlepszy value pick i najtańszy sensowny wybór do lekkiego terenu, ale z wyraźnie gorszym hamowaniem i słabszym potwierdzeniem realnego zasięgu niż topowe opcje ([MAJway](https://www.shop.majway.pl/kukirin-g2-master-2-1000w-20-8ah-52v,3,109628,11499565), [KuKirin PL](https://www.kukirin-scooter.pl/products/g2-master)).
+4. **Techlife Q7 RSX V2** — bardzo mocny serwisowo i zasięgowo na papierze, ale mniej przekonujący jako stricte terenowy faworyt ([Q7 RSX](https://techlife.pl/produkty/458-techlife-q7-rsx-20-30ah-52v-smart-bms-zasiego-do-100km-5907497215847.html), [serwis](https://techlife.pl/content/9-serwis)).
+
+## Materiał słaby lub konfliktowy
+Najbardziej konfliktowe i słabe źródłowo są **deklaracje realnego zasięgu** dla Hiley i KuKirin, bo sklepy podają wysokie wartości, ale brakuje równie mocnej walidacji niezależnej jak dla Nami i VSETT ([Hiley sklep](https://hiley.pl/p/tiger-10-v5-performance/), [KuKirin PL](https://www.kukirin-scooter.pl/products/g2-master), [Rider Guide Nami](https://riderguide.com/reviews/nami-klima-review/), [Rider Guide VSETT](https://riderguide.com/reviews/vsett-10-review/)).
+Dla części polskich kart produktowych problemem jest też niepełna jawność tabel parametrów albo marketingowy język zamiast testów terenowych ([shortlista](./02-rynek-polska-shortlista.md)).
+
+## Rekomendacja praktyczna
+Jeśli chcesz kupić **jedną hulajnogę bez dalszego drążenia**, brałbym **Hiley Tiger 10 V5 Performance** jako wybór najbardziej zgodny z Twoim profilem, ale przed zakupem poprosiłbym sprzedawcę o **pisemne potwierdzenie specyfikacji, gwarancji i warunków serwisu door-to-door** ([Hiley sklep](https://hiley.pl/p/tiger-10-v5-performance/), [serwis](https://hiley.pl/serwis-gwarancja/)).
+Jeśli chcesz maksymalnie obniżyć ryzyko posprzedażowe, brałbym **Motus Pro 10 GT** ([Motus produkt](https://motusxd.pl/hulajnogi-wyscigowe/1296-pojazd-elektryczny-motus-pro-10-gt-5906954761118.html), [lista serwisów](https://motusxd.pl/content/13-autoryzowane-serwisy-motus)).
+Jeśli chcesz najlepszy stosunek cena/teren i akceptujesz większą niepewność danych, brałbym **KuKirin G2 Master** ([MAJway](https://www.shop.majway.pl/kukirin-g2-master-2-1000w-20-8ah-52v,3,109628,11499565), [KuKirin PL](https://www.kukirin-scooter.pl/products/g2-master)).

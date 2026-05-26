@@ -69,7 +69,7 @@ func (a *Agent) run(ctx context.Context) error {
 		// --- STREAMING ---
 		a.setState(StateStreaming)
 
-		assistantMsg, err := a.streamToMessage(runCtx)
+		assistantMsg, nativeFinalizedToolCalls, err := a.streamToMessage(runCtx)
 		if err != nil {
 			a.mu.Lock()
 			a.runErr = err
@@ -97,6 +97,24 @@ func (a *Agent) run(ctx context.Context) error {
 		toolCalls := extractToolCalls(assistantMsg)
 
 		if len(toolCalls) > 0 {
+			for _, call := range toolCalls {
+				if nativeFinalizedToolCalls[call.ID] {
+					continue
+				}
+				a.emit(types.AgentEvent{
+					Type: types.AgentEventToolExecEnd,
+					Data: types.ToolLifecycleEvent{
+						CallID:       call.ID,
+						ToolName:     call.Name,
+						Phase:        types.ToolLifecycleFinalized,
+						Source:       types.ToolLifecycleSourceInferred,
+						ArgsJSON:     append([]byte(nil), call.Arguments...),
+						ArgsSummary:  types.SummarizeToolArgsJSON(call.Name, call.Arguments),
+						ArgsComplete: true,
+					},
+				})
+			}
+
 			// --- EXECUTING_TOOLS ---
 			a.setState(StateExecuting)
 
@@ -115,6 +133,20 @@ func (a *Agent) run(ctx context.Context) error {
 			for !execDone {
 				select {
 				case <-runCtx.Done():
+					for _, call := range toolCalls {
+						resultMsg := buildInterruptedToolResultMessage(call, runCtx.Err())
+						a.addMessage(resultMsg)
+
+						a.emit(types.AgentEvent{
+							Type: types.AgentEventToolResult,
+							Data: types.ToolResultEvent{
+								CallID:   call.ID,
+								ToolName: call.Name,
+								IsError:  true,
+								Content:  toolResultTextFromMessage(resultMsg),
+							},
+						})
+					}
 					a.mu.Lock()
 					a.runErr = runCtx.Err()
 					a.mu.Unlock()
@@ -126,9 +158,9 @@ func (a *Agent) run(ctx context.Context) error {
 					for _, tc := range toolCalls {
 						a.emit(types.AgentEvent{
 							Type: types.AgentEventToolProgress,
-							Data: map[string]any{
-								"tool": tc.Name,
-								"id":   tc.ID,
+							Data: types.ToolProgressEvent{
+								CallID:   tc.ID,
+								ToolName: tc.Name,
 							},
 						})
 					}
@@ -141,11 +173,11 @@ func (a *Agent) run(ctx context.Context) error {
 
 				a.emit(types.AgentEvent{
 					Type: types.AgentEventToolResult,
-					Data: map[string]any{
-						"tool":    toolCalls[i].Name,
-						"args":    string(toolCalls[i].Arguments),
-						"isError": result.Result != nil && result.Result.IsError,
-						"content": toolResultText(result),
+					Data: types.ToolResultEvent{
+						CallID:   toolCalls[i].ID,
+						ToolName: toolCalls[i].Name,
+						IsError:  result.Result != nil && result.Result.IsError,
+						Content:  toolResultText(result),
 					},
 				})
 			}
@@ -173,7 +205,7 @@ func (a *Agent) run(ctx context.Context) error {
 
 // streamToMessage consumes the provider stream channel and builds
 // an assistant AgentMessage. Emits agent events for each stream event.
-func (a *Agent) streamToMessage(ctx context.Context) (*types.AgentMessage, error) {
+func (a *Agent) streamToMessage(ctx context.Context) (*types.AgentMessage, map[string]bool, error) {
 	a.mu.RLock()
 	thinkingLevel := a.thinkingLevel
 	model := a.model
@@ -192,6 +224,7 @@ func (a *Agent) streamToMessage(ctx context.Context) (*types.AgentMessage, error
 	slog.Debug("agent: provider.Stream returned, iterating events", "model", model.ID)
 
 	var lastMsg *types.AgentMessage
+	nativeFinalizedToolCalls := make(map[string]bool)
 	eventCount := 0
 	for event := range events {
 		eventCount++
@@ -204,32 +237,48 @@ func (a *Agent) streamToMessage(ctx context.Context) (*types.AgentMessage, error
 		case types.EventThinkingDelta:
 			a.emit(types.AgentEvent{Type: types.AgentEventThinkingDelta, Data: event.Delta})
 		case types.EventToolCallStart:
-			// event.Delta contains the tool name
+			// event.Delta contains the tool name. Some providers do not expose a
+			// stable call ID until the final message; use native/source metadata now
+			// and emit inferred finalized events with IDs after EventDone.
 			a.emit(types.AgentEvent{
 				Type: types.AgentEventToolExecStart,
-				Data: map[string]any{
-					"tool": event.Delta,
+				Data: types.ToolLifecycleEvent{
+					ToolName:     event.Delta,
+					Phase:        types.ToolLifecycleRequested,
+					Source:       types.ToolLifecycleSourceNative,
+					ArgsSummary:  types.SummarizeToolArgs(event.Delta, nil),
+					ArgsComplete: false,
 				},
 			})
 		case types.EventToolCallEnd:
-			// event.Message contains the full tool call with arguments
-			args := ""
+			// event.Message contains the full tool call with arguments for providers
+			// that stream symmetric native end events.
+			var payload *types.ToolLifecycleEvent
 			if event.Message != nil {
 				for _, block := range event.Message.Content {
 					if block.Type == types.BlockToolCall && block.ToolCall != nil {
 						argsJSON, _ := json.Marshal(block.ToolCall.Arguments)
-						args = string(argsJSON)
+						payload = &types.ToolLifecycleEvent{
+							CallID:       block.ToolCall.ID,
+							ToolName:     block.ToolCall.Name,
+							Phase:        types.ToolLifecycleFinalized,
+							Source:       types.ToolLifecycleSourceNative,
+							ArgsJSON:     argsJSON,
+							ArgsSummary:  types.SummarizeToolArgs(block.ToolCall.Name, block.ToolCall.Arguments),
+							ArgsComplete: true,
+						}
+						nativeFinalizedToolCalls[block.ToolCall.ID] = true
 						break
 					}
 				}
 			}
-			a.emit(types.AgentEvent{
-				Type: types.AgentEventToolExecEnd,
-				Data: map[string]any{
-					"tool": event.Delta,
-					"args": args,
-				},
-			})
+			if payload == nil {
+				// A native end event without a stable call ID cannot satisfy the
+				// canonical finalized contract. Wait for EventDone/final assistant
+				// message normalization to emit one inferred finalized event with ID.
+				continue
+			}
+			a.emit(types.AgentEvent{Type: types.AgentEventToolExecEnd, Data: *payload})
 		case types.EventDone:
 			lastMsg = event.Message
 			if lastMsg != nil {
@@ -247,7 +296,7 @@ func (a *Agent) streamToMessage(ctx context.Context) (*types.AgentMessage, error
 				a.mu.Unlock()
 			}
 		case types.EventError:
-			return nil, fmt.Errorf("provider stream error: %s", event.Error)
+			return nil, nativeFinalizedToolCalls, fmt.Errorf("provider stream error: %s", event.Error)
 		}
 	}
 
@@ -265,7 +314,7 @@ func (a *Agent) streamToMessage(ctx context.Context) (*types.AgentMessage, error
 		}
 	}
 
-	return lastMsg, nil
+	return lastMsg, nativeFinalizedToolCalls, nil
 }
 
 // extractToolCalls pulls ToolCallBlock entries from an assistant message
@@ -307,6 +356,25 @@ func buildToolResultMessage(call tools.ToolCallRequest, result *tools.ToolCallRe
 	}
 }
 
+// buildInterruptedToolResultMessage creates a synthetic tool_result for a tool
+// call that was in-flight when the agent was interrupted. Provider APIs such as
+// OpenAI Responses require every assistant tool call in history to have a
+// matching tool output before the next request.
+func buildInterruptedToolResultMessage(call tools.ToolCallRequest, err error) types.AgentMessage {
+	msg := "Tool execution interrupted"
+	if err != nil {
+		msg = fmt.Sprintf("%s: %v", msg, err)
+	}
+	return buildToolResultMessage(call, &tools.ToolCallResult{
+		ID:   call.ID,
+		Name: call.Name,
+		Result: &types.ToolResult{
+			IsError: true,
+			Content: []types.ContentBlock{{Type: types.BlockText, Text: msg}},
+		},
+	})
+}
+
 // toolResultText extracts the text content from a tool call result.
 func toolResultText(result *tools.ToolCallResult) string {
 	if result == nil || result.Result == nil {
@@ -314,6 +382,16 @@ func toolResultText(result *tools.ToolCallResult) string {
 	}
 	var parts []string
 	for _, block := range result.Result.Content {
+		if block.Type == types.BlockText && block.Text != "" {
+			parts = append(parts, block.Text)
+		}
+	}
+	return strings.Join(parts, "\n")
+}
+
+func toolResultTextFromMessage(msg types.AgentMessage) string {
+	var parts []string
+	for _, block := range msg.Content {
 		if block.Type == types.BlockText && block.Text != "" {
 			parts = append(parts, block.Text)
 		}

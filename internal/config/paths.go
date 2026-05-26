@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 )
 
 // TauPaths holds computed directory paths for Tau.
@@ -170,7 +171,8 @@ func SessionsDir(cwd string) (string, error) {
 	return dir, nil
 }
 
-// LatestSessionFile finds the most recent session file in the given directory.
+// LatestSessionFile finds the most recent session file in the given directory
+// by file modification time, using filename as a deterministic tie-breaker.
 // Returns the full path, or empty string if no sessions exist.
 func LatestSessionFile(dir string) (string, error) {
 	entries, err := os.ReadDir(dir)
@@ -181,11 +183,19 @@ func LatestSessionFile(dir string) (string, error) {
 		return "", err
 	}
 
-	// Filter for .jsonl files
-	var files []string
+	// Collect .jsonl files with their modification times
+	type fileWithTime struct {
+		name string
+		mod  time.Time
+	}
+	var files []fileWithTime
 	for _, e := range entries {
 		if !e.IsDir() && strings.HasSuffix(e.Name(), ".jsonl") {
-			files = append(files, e.Name())
+			info, err := e.Info()
+			if err != nil {
+				continue // skip files we can't stat
+			}
+			files = append(files, fileWithTime{name: e.Name(), mod: info.ModTime()})
 		}
 	}
 
@@ -193,8 +203,13 @@ func LatestSessionFile(dir string) (string, error) {
 		return "", nil
 	}
 
-	// Sort by filename — timestamp prefix ensures chronological order
-	sort.Strings(files)
+	// Sort by modification time (newest last), filename as tie-breaker
+	sort.Slice(files, func(i, j int) bool {
+		if files[i].mod.Equal(files[j].mod) {
+			return files[i].name < files[j].name
+		}
+		return files[i].mod.Before(files[j].mod)
+	})
 
-	return filepath.Join(dir, files[len(files)-1]), nil
+	return filepath.Join(dir, files[len(files)-1].name), nil
 }

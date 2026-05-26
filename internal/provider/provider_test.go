@@ -97,8 +97,8 @@ func TestRegistry_ModelsAccess(t *testing.T) {
 	r := NewRegistry()
 	models := r.Models()
 	all := models.ListAll()
-	if len(all) != 10 {
-		t.Fatalf("expected 10 models, got %d", len(all))
+	if len(all) != 3 {
+		t.Fatalf("expected 3 models, got %d", len(all))
 	}
 }
 

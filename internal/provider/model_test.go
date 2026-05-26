@@ -11,15 +11,8 @@ func TestModelRegistry_FindExact(t *testing.T) {
 
 	tests := []string{
 		"gpt-4o",
-		"gpt-4o-mini",
-		"o1",
-		"o3",
 		"claude-sonnet-4-20250514",
-		"claude-3-7-sonnet-20250219",
-		"claude-3-5-sonnet-20241022",
 		"gemini-2.5-pro",
-		"gemini-2.5-flash",
-		"gemini-2.0-flash",
 	}
 
 	for _, id := range tests {
@@ -42,12 +35,11 @@ func TestModelRegistry_FindPattern(t *testing.T) {
 		pattern  string
 		expectID string
 	}{
-		{"gpt-4o", "gpt-4o"},           // exact match
-		{"claude-sonnet-4", "claude-sonnet-4-20250514"}, // substring
-		{"gemini-2.5-pro", "gemini-2.5-pro"}, // exact
-		{"claude-3-5-sonnet", "claude-3-5-sonnet-20241022"}, // substring
-		{"Gemini", ""},                   // multiple matches
-		{"nonexistent", ""},              // no match
+		{"gpt-4o", "gpt-4o"},
+		{"claude-sonnet-4", "claude-sonnet-4-20250514"},
+		{"gemini-2.5-pro", "gemini-2.5-pro"},
+		{"Gemini", "gemini-2.5-pro"},
+		{"nonexistent", ""},
 	}
 
 	for _, tc := range tests {
@@ -90,9 +82,9 @@ func TestModelRegistry_ListAll(t *testing.T) {
 	r := NewModelRegistry()
 	models := r.ListAll()
 
-	// We defined 10 built-in models
-	if len(models) != 10 {
-		t.Fatalf("expected 10 models, got %d", len(models))
+	// Minimal built-in set: 1 per provider (openai, anthropic, google)
+	if len(models) != 3 {
+		t.Fatalf("expected 3 models, got %d", len(models))
 	}
 }
 
@@ -100,18 +92,18 @@ func TestModelRegistry_ListByProvider(t *testing.T) {
 	r := NewModelRegistry()
 
 	openAI := r.ListByProvider("openai")
-	if len(openAI) != 4 {
-		t.Fatalf("expected 4 OpenAI models, got %d", len(openAI))
+	if len(openAI) != 1 {
+		t.Fatalf("expected 1 OpenAI model, got %d", len(openAI))
 	}
 
 	anthropic := r.ListByProvider("anthropic")
-	if len(anthropic) != 3 {
-		t.Fatalf("expected 3 Anthropic models, got %d", len(anthropic))
+	if len(anthropic) != 1 {
+		t.Fatalf("expected 1 Anthropic model, got %d", len(anthropic))
 	}
 
 	google := r.ListByProvider("google")
-	if len(google) != 3 {
-		t.Fatalf("expected 3 Google models, got %d", len(google))
+	if len(google) != 1 {
+		t.Fatalf("expected 1 Google model, got %d", len(google))
 	}
 
 	none := r.ListByProvider("unknown")
@@ -145,13 +137,13 @@ func TestModelRegistry_RemoveByProvider(t *testing.T) {
 
 	// Verify initial counts
 	openAI := r.ListByProvider("openai")
-	if len(openAI) != 4 {
-		t.Fatalf("expected 4 OpenAI models initially, got %d", len(openAI))
+	if len(openAI) != 1 {
+		t.Fatalf("expected 1 OpenAI model initially, got %d", len(openAI))
 	}
 
 	anthropic := r.ListByProvider("anthropic")
-	if len(anthropic) != 3 {
-		t.Fatalf("expected 3 Anthropic models initially, got %d", len(anthropic))
+	if len(anthropic) != 1 {
+		t.Fatalf("expected 1 Anthropic model initially, got %d", len(anthropic))
 	}
 
 	totalBefore := len(r.ListAll())
@@ -167,19 +159,19 @@ func TestModelRegistry_RemoveByProvider(t *testing.T) {
 
 	// Verify other providers are unaffected
 	anthropicAfter := r.ListByProvider("anthropic")
-	if len(anthropicAfter) != 3 {
-		t.Fatalf("expected 3 Anthropic models after removal, got %d", len(anthropicAfter))
+	if len(anthropicAfter) != 1 {
+		t.Fatalf("expected 1 Anthropic model after removal, got %d", len(anthropicAfter))
 	}
 
 	googleAfter := r.ListByProvider("google")
-	if len(googleAfter) != 3 {
-		t.Fatalf("expected 3 Google models after removal, got %d", len(googleAfter))
+	if len(googleAfter) != 1 {
+		t.Fatalf("expected 1 Google model after removal, got %d", len(googleAfter))
 	}
 
-	// Verify total count decreased by 4
+	// Verify total count decreased by 1
 	totalAfter := len(r.ListAll())
-	if totalAfter != totalBefore-4 {
-		t.Fatalf("expected %d models after removal, got %d", totalBefore-4, totalAfter)
+	if totalAfter != totalBefore-1 {
+		t.Fatalf("expected %d models after removal, got %d", totalBefore-1, totalAfter)
 	}
 }
 
@@ -191,7 +183,96 @@ func TestModelRegistry_RemoveByProvider_NonExistent(t *testing.T) {
 
 	// Verify no error occurred (this is a no-op)
 	totalAfter := len(r.ListAll())
-	if totalAfter != 10 {
-		t.Fatalf("expected 10 models after no-op removal, got %d", totalAfter)
+	if totalAfter != 3 {
+		t.Fatalf("expected 3 models after no-op removal, got %d", totalAfter)
+	}
+}
+
+func TestParseModelRef(t *testing.T) {
+	tests := []struct {
+		ref          string
+		wantProvider string
+		wantModelID  string
+	}{
+		{"", "", ""},
+		{"gpt-4o", "", "gpt-4o"},
+		{"openai/gpt-4o", "openai", "gpt-4o"},
+		{"openrouter/openai/gpt-4o", "openrouter", "openai/gpt-4o"},
+		{"anthropic/claude-sonnet-4-20250514", "anthropic", "claude-sonnet-4-20250514"},
+		{"/gpt-4o", "", "gpt-4o"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.ref, func(t *testing.T) {
+			prov, modelID := ParseModelRef(tc.ref)
+			if prov != tc.wantProvider {
+				t.Errorf("provider = %q, want %q", prov, tc.wantProvider)
+			}
+			if modelID != tc.wantModelID {
+				t.Errorf("modelID = %q, want %q", modelID, tc.wantModelID)
+			}
+		})
+	}
+}
+
+func TestModelRegistry_CompoundKeys(t *testing.T) {
+	r := NewModelRegistry()
+
+	// Register same model ID under different providers
+	r.Register(types.Model{ID: "test-model", Provider: "provider-a", Name: "Test A"})
+	r.Register(types.Model{ID: "test-model", Provider: "provider-b", Name: "Test B"})
+
+	// Both should exist
+	all := r.ListAll()
+	if len(all) < 5 { // 3 built-in + 2 new
+		t.Fatalf("expected at least 5 models, got %d", len(all))
+	}
+
+	// Find by compound key should work
+	m, err := r.Find("provider-a/test-model")
+	if err != nil {
+		t.Fatalf("find provider-a/test-model: %v", err)
+	}
+	if m.Provider != "provider-a" {
+		t.Errorf("expected provider-a, got %s", m.Provider)
+	}
+
+	m, err = r.Find("provider-b/test-model")
+	if err != nil {
+		t.Fatalf("find provider-b/test-model: %v", err)
+	}
+	if m.Provider != "provider-b" {
+		t.Errorf("expected provider-b, got %s", m.Provider)
+	}
+
+	// Bare ID should be ambiguous
+	_, err = r.Find("test-model")
+	if err == nil {
+		t.Fatal("expected error for ambiguous bare model ID")
+	}
+}
+
+func TestModelRegistry_FindExactProviderModel(t *testing.T) {
+	r := NewModelRegistry()
+
+	// Register same model ID under different providers
+	r.Register(types.Model{ID: "shared-model", Provider: "alpha", Name: "Alpha"})
+	r.Register(types.Model{ID: "shared-model", Provider: "beta", Name: "Beta"})
+
+	// Exact provider/modelID should resolve correctly
+	m, err := r.Find("alpha/shared-model")
+	if err != nil {
+		t.Fatalf("find alpha/shared-model: %v", err)
+	}
+	if m.Provider != "alpha" {
+		t.Errorf("expected alpha, got %s", m.Provider)
+	}
+
+	m, err = r.Find("beta/shared-model")
+	if err != nil {
+		t.Fatalf("find beta/shared-model: %v", err)
+	}
+	if m.Provider != "beta" {
+		t.Errorf("expected beta, got %s", m.Provider)
 	}
 }

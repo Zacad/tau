@@ -372,7 +372,7 @@ func TestCustomCommand_TemplateExecution(t *testing.T) {
 	}
 
 	// Verify template processing works correctly (tested more thoroughly in customcmd package)
-	template := customcmd.ProcessTemplate("Hello $1, welcome to $2", "Alice tau")
+	template := customcmd.ProcessTemplate("Hello $1, welcome to $2", "Alice tau", nil)
 	if template != "Hello Alice, welcome to tau" {
 		t.Errorf("expected 'Hello Alice, welcome to tau', got %q", template)
 	}

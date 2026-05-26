@@ -1103,3 +1103,119 @@ func TestRenderBlocks_ResizeReflowsContent(t *testing.T) {
 	}
 }
 
+func TestFormatTokens(t *testing.T) {
+	tests := []struct {
+		name  string
+		count int
+		want  string
+	}{
+		{"zero", 0, "0"},
+		{"small", 42, "42"},
+		{"hundred", 999, "999"},
+		{"one_k", 1000, "1.0k"},
+		{"one_point_five_k", 1500, "1.5k"},
+		{"nine_point_nine_k", 9999, "10.0k"},
+		{"ten_k", 10000, "10k"},
+		{"two_hundred_k", 200000, "200k"},
+		{"one_m", 1000000, "1.0M"},
+		{"one_point_two_m", 1200000, "1.2M"},
+		{"ten_m", 10000000, "10M"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := formatTokens(tt.count)
+			if got != tt.want {
+				t.Errorf("formatTokens(%d) = %q, want %q", tt.count, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestFooter_ContextUsage(t *testing.T) {
+	m := newTestModel()
+	m.modelName = "gpt-4o"
+	m.modelProv = "openai"
+	m.cwd = "/test"
+	m.width = 120
+	m.contextWindow = 128000
+	m.contextKnown = true
+
+	// No context known yet (fresh model, no messages)
+	m.state = stateIdle
+	got := m.renderFooter()
+	clean := stripANSI(got)
+	if !strings.Contains(clean, "ctx:0%/128k") {
+		t.Errorf("expected ctx:0%%/128k in footer, got: %q", clean)
+	}
+
+	// Simulate context usage at 50%
+	m.contextTokens = 64000
+	m.turnCount = 1
+	got = m.renderFooter()
+	clean = stripANSI(got)
+	if !strings.Contains(clean, "ctx:50.0%/128k") {
+		t.Errorf("expected ctx:50.0%%/128k in footer, got: %q", clean)
+	}
+}
+
+func TestFooter_ContextHiddenWhenUnknown(t *testing.T) {
+	m := newTestModel()
+	m.modelName = "test-model"
+	m.modelProv = "ollama"
+	m.cwd = "/test"
+	m.width = 120
+	m.contextWindow = 0
+	m.contextKnown = false
+
+	got := m.renderFooter()
+	clean := stripANSI(got)
+	if strings.Contains(clean, "ctx:") {
+		t.Errorf("ctx should be hidden when contextWindow is 0, got: %q", clean)
+	}
+}
+
+func TestFooter_ContextWarningThreshold(t *testing.T) {
+	m := newTestModel()
+	m.modelName = "claude-sonnet-4-6"
+	m.modelProv = "anthropic"
+	m.cwd = "/test"
+	m.width = 120
+	m.contextWindow = 200000
+	m.contextTokens = 150000 // 75%
+	m.contextKnown = true
+	m.turnCount = 1
+
+	got := m.renderFooter()
+	clean := stripANSI(got)
+	if !strings.Contains(clean, "ctx:75.0%/200k") {
+		t.Errorf("expected ctx:75.0%%/200k in footer, got: %q", clean)
+	}
+	// Should have warning color (ANSI code for color 220)
+	if !strings.Contains(got, "220") {
+		t.Errorf("expected warning color (220) in footer, got: %q", got)
+	}
+}
+
+func TestFooter_ContextErrorThreshold(t *testing.T) {
+	m := newTestModel()
+	m.modelName = "claude-sonnet-4-6"
+	m.modelProv = "anthropic"
+	m.cwd = "/test"
+	m.width = 120
+	m.contextWindow = 200000
+	m.contextTokens = 185000 // 92.5%
+	m.contextKnown = true
+	m.turnCount = 1
+
+	got := m.renderFooter()
+	clean := stripANSI(got)
+	if !strings.Contains(clean, "ctx:92.5%/200k") {
+		t.Errorf("expected ctx:92.5%%/200k in footer, got: %q", clean)
+	}
+	// Should have error color (ANSI code for color 196)
+	if !strings.Contains(got, "196") {
+		t.Errorf("expected error color (196) in footer, got: %q", got)
+	}
+}
+

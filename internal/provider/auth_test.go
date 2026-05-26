@@ -109,6 +109,25 @@ func TestResolveKey_AuthJSON(t *testing.T) {
 	}
 }
 
+func TestResolveKey_AuthJSON_OAuth(t *testing.T) {
+	// Create a temp auth.json with OAuth credentials
+	dir := t.TempDir()
+	authPath := filepath.Join(dir, "auth.json")
+	content := `{"openai": {"type":"oauth","access":"jwt-token","refresh":"refresh-token","expires":1234567890,"account_id":"user-123"}}`
+	if err := os.WriteFile(authPath, []byte(content), 0600); err != nil {
+		t.Fatalf("failed to write auth.json: %v", err)
+	}
+
+	// readAuthKey should return empty string for OAuth type (no API key value)
+	key, err := readAuthKey(authPath, "openai")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if key != "" {
+		t.Fatalf("expected empty string for OAuth credential, got %s", key)
+	}
+}
+
 func TestResolveKey_MissingProvider(t *testing.T) {
 	dir := t.TempDir()
 	authPath := filepath.Join(dir, "auth.json")

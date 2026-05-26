@@ -143,17 +143,23 @@ func TestCtrlP_OpensPalette(t *testing.T) {
 	}
 }
 
-func TestCtrlP_OpensPaletteWithAppCommandsOnly(t *testing.T) {
+func TestCtrlP_OpensPaletteWithAllCommands(t *testing.T) {
 	m := newTestModel()
 	m.width = 80
 	m.height = 40
 
 	m.handleKeyPress(keyCtrlP())
 
+	// Palette should contain all command types including chat commands.
+	// Verify that at least one app command is present.
+	foundApp := false
 	for _, cmd := range m.palette.commands {
-		if cmd.Type() == chatCommand {
-			t.Fatalf("palette should not contain chat commands, got %q with type chatCommand", cmd.Name())
+		if cmd.Type() == appCommand || cmd.Type() == appMultiStepCommand {
+			foundApp = true
 		}
+	}
+	if !foundApp {
+		t.Fatal("palette should contain app commands")
 	}
 }
 

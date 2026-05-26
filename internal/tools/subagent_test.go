@@ -17,7 +17,7 @@ import (
 
 func TestSubAgentTool_Name(t *testing.T) {
 	mp := &testutilMockProvider{}
-	tool := NewSubAgentTool(mp, types.Model{ID: "test-model"}, nil, nil, nil)
+	tool := NewSubAgentTool(mp, types.Model{ID: "test-model"}, nil, nil, nil, nil, 0)
 
 	if tool.Name() != "subagent" {
 		t.Errorf("expected name 'subagent', got %q", tool.Name())
@@ -26,7 +26,7 @@ func TestSubAgentTool_Name(t *testing.T) {
 
 func TestSubAgentTool_Description(t *testing.T) {
 	mp := &testutilMockProvider{}
-	tool := NewSubAgentTool(mp, types.Model{ID: "test-model"}, nil, nil, nil)
+	tool := NewSubAgentTool(mp, types.Model{ID: "test-model"}, nil, nil, nil, nil, 0)
 
 	desc := tool.Description()
 	if desc == "" {
@@ -44,21 +44,21 @@ func TestSubAgentTool_Description_WithDiscoveredAgents(t *testing.T) {
 	mp := &testutilMockProvider{}
 	agents := map[string]*subagent.AgentDefinition{
 		"greeter": {
-			Name:        "greeter",
-			Description: "A friendly greeter agent",
-			Tools:       []string{"bash"},
+			Name:         "greeter",
+			Description:  "A friendly greeter agent",
+			Tools:        []string{"bash"},
 			SystemPrompt: "You are a greeter.",
-			Source:      "user",
+			Source:       "user",
 		},
 		"code-reviewer": {
-			Name:        "code-reviewer",
-			Description: "Reviews code for bugs",
-			Tools:       []string{"read", "grep"},
+			Name:         "code-reviewer",
+			Description:  "Reviews code for bugs",
+			Tools:        []string{"read", "grep"},
 			SystemPrompt: "You are a code reviewer.",
-			Source:      "project",
+			Source:       "project",
 		},
 	}
-	tool := NewSubAgentTool(mp, types.Model{ID: "test-model"}, nil, nil, agents)
+	tool := NewSubAgentTool(mp, types.Model{ID: "test-model"}, nil, nil, nil, agents, 0)
 
 	desc := tool.Description()
 	if !strings.Contains(desc, "User-defined agents") {
@@ -77,7 +77,7 @@ func TestSubAgentTool_Description_WithDiscoveredAgents(t *testing.T) {
 
 func TestSubAgentTool_ExecutionMode(t *testing.T) {
 	mp := &testutilMockProvider{}
-	tool := NewSubAgentTool(mp, types.Model{ID: "test-model"}, nil, nil, nil)
+	tool := NewSubAgentTool(mp, types.Model{ID: "test-model"}, nil, nil, nil, nil, 0)
 
 	if tool.ExecutionMode() != types.ExecutionExclusive {
 		t.Errorf("expected ExecutionExclusive, got %v", tool.ExecutionMode())
@@ -101,7 +101,7 @@ func TestSubAgentTool_Execute_Success(t *testing.T) {
 	reg.Register(NewReadTool("/tmp", 50000))
 	reg.Register(NewLsTool("/tmp", 50000))
 
-	tool := NewSubAgentTool(mp, types.Model{ID: "test-model", Provider: "mock", API: "mock"}, reg, reg.Names(), nil)
+	tool := NewSubAgentTool(mp, types.Model{ID: "test-model", Provider: "mock", API: "mock"}, nil, reg, reg.Names(), nil, 0)
 
 	params := &SubAgentParams{
 		Task: "Do something",
@@ -157,7 +157,7 @@ func TestSubAgentTool_Execute_Failure(t *testing.T) {
 			{Type: types.EventError, Error: "model not found"},
 		},
 	}
-	tool := NewSubAgentTool(mp, types.Model{ID: "test-model", Provider: "mock", API: "mock"}, nil, nil, nil)
+	tool := NewSubAgentTool(mp, types.Model{ID: "test-model", Provider: "mock", API: "mock"}, nil, nil, nil, nil, 0)
 
 	params := &SubAgentParams{
 		Task: "Do something",
@@ -187,7 +187,7 @@ func TestSubAgentTool_Execute_CustomModel(t *testing.T) {
 			capturedModel = model
 		},
 	}
-	tool := NewSubAgentTool(mp, types.Model{ID: "parent-model", Provider: "mock", API: "mock"}, nil, nil, nil)
+	tool := NewSubAgentTool(mp, types.Model{ID: "parent-model", Provider: "mock", API: "mock"}, nil, nil, nil, nil, 0)
 
 	params := &SubAgentParams{
 		Task:  "Do something",
@@ -215,7 +215,7 @@ func TestSubAgentTool_Execute_DefaultModel(t *testing.T) {
 			capturedModel = model
 		},
 	}
-	tool := NewSubAgentTool(mp, types.Model{ID: "parent-model", Provider: "mock", API: "mock"}, nil, nil, nil)
+	tool := NewSubAgentTool(mp, types.Model{ID: "parent-model", Provider: "mock", API: "mock"}, nil, nil, nil, nil, 0)
 
 	params := &SubAgentParams{
 		Task: "Do something",
@@ -242,7 +242,7 @@ func TestSubAgentTool_Execute_SystemPrompt(t *testing.T) {
 			capturedSystemPrompt = opts.SystemPrompt
 		},
 	}
-	tool := NewSubAgentTool(mp, types.Model{ID: "test-model", Provider: "mock", API: "mock"}, nil, nil, nil)
+	tool := NewSubAgentTool(mp, types.Model{ID: "test-model", Provider: "mock", API: "mock"}, nil, nil, nil, nil, 0)
 
 	params := &SubAgentParams{
 		Task:         "Do something",
@@ -273,7 +273,7 @@ func TestSubAgentTool_Execute_Timeout(t *testing.T) {
 			}
 		},
 	}
-	tool := NewSubAgentTool(mp, types.Model{ID: "test-model", Provider: "mock", API: "mock"}, nil, nil, nil)
+	tool := NewSubAgentTool(mp, types.Model{ID: "test-model", Provider: "mock", API: "mock"}, nil, nil, nil, nil, 0)
 
 	params := &SubAgentParams{
 		Task:    "Do something",
@@ -284,8 +284,100 @@ func TestSubAgentTool_Execute_Timeout(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if capturedTimeout <= 0 || capturedTimeout > 30*time.Second {
-		t.Errorf("expected timeout around 30s, got %v", capturedTimeout)
+	// 30s is below minimum, should be bumped to ~5m
+	if capturedTimeout <= 0 || capturedTimeout > 5*time.Minute {
+		t.Errorf("expected timeout around 5m (minimum enforced), got %v", capturedTimeout)
+	}
+}
+
+func TestSubAgentTool_Execute_DefaultTimeoutWhenConfigMissing(t *testing.T) {
+	var capturedTimeout time.Duration
+	mp := &timeoutCapturingMockProvider{
+		events: []types.StreamEvent{
+			{Type: types.EventStart},
+			{Type: types.EventTextDelta, Delta: "done"},
+			{Type: types.EventDone, Message: &types.AgentMessage{}},
+		},
+		onStream: func(ctx context.Context) {
+			deadline, ok := ctx.Deadline()
+			if ok {
+				capturedTimeout = time.Until(deadline)
+			}
+		},
+	}
+	tool := NewSubAgentTool(mp, types.Model{ID: "test-model", Provider: "mock", API: "mock"}, nil, nil, nil, nil, 0)
+
+	_, err := tool.Execute(context.Background(), &SubAgentParams{Task: "Do something"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if capturedTimeout <= 0 || capturedTimeout > subagent.DefaultTimeout {
+		t.Errorf("expected default timeout around %v, got %v", subagent.DefaultTimeout, capturedTimeout)
+	}
+}
+
+func TestSubAgentTool_Execute_TimeoutAboveMinimum(t *testing.T) {
+	var capturedTimeout time.Duration
+	mp := &timeoutCapturingMockProvider{
+		events: []types.StreamEvent{
+			{Type: types.EventStart},
+			{Type: types.EventTextDelta, Delta: "done"},
+			{Type: types.EventDone, Message: &types.AgentMessage{}},
+		},
+		onStream: func(ctx context.Context) {
+			deadline, ok := ctx.Deadline()
+			if ok {
+				capturedTimeout = time.Until(deadline)
+			}
+		},
+	}
+	tool := NewSubAgentTool(mp, types.Model{ID: "test-model", Provider: "mock", API: "mock"}, nil, nil, nil, nil, 0)
+
+	params := &SubAgentParams{
+		Task:    "Do something",
+		Timeout: "5m",
+	}
+
+	_, err := tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// 5m is above minimum, should be preserved
+	if capturedTimeout <= 0 || capturedTimeout > 5*time.Minute {
+		t.Errorf("expected timeout around 5m, got %v", capturedTimeout)
+	}
+}
+
+func TestSubAgentTool_Execute_DefaultTimeoutFromConfig(t *testing.T) {
+	var capturedTimeout time.Duration
+	mp := &timeoutCapturingMockProvider{
+		events: []types.StreamEvent{
+			{Type: types.EventStart},
+			{Type: types.EventTextDelta, Delta: "done"},
+			{Type: types.EventDone, Message: &types.AgentMessage{}},
+		},
+		onStream: func(ctx context.Context) {
+			deadline, ok := ctx.Deadline()
+			if ok {
+				capturedTimeout = time.Until(deadline)
+			}
+		},
+	}
+	// Pass 3m as the config default timeout. It is below the enforced minimum,
+	// so the effective timeout should be bumped to 5m.
+	tool := NewSubAgentTool(mp, types.Model{ID: "test-model", Provider: "mock", API: "mock"}, nil, nil, nil, nil, 3*time.Minute)
+
+	// No timeout specified in params — should use config default
+	params := &SubAgentParams{
+		Task: "Do something",
+	}
+
+	_, err := tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if capturedTimeout <= 0 || capturedTimeout > 5*time.Minute {
+		t.Errorf("expected timeout around 5m (minimum enforced), got %v", capturedTimeout)
 	}
 }
 
@@ -297,7 +389,7 @@ func TestSubAgentTool_Execute_InvalidTimeout(t *testing.T) {
 			{Type: types.EventDone, Message: &types.AgentMessage{}},
 		},
 	}
-	tool := NewSubAgentTool(mp, types.Model{ID: "test-model", Provider: "mock", API: "mock"}, nil, nil, nil)
+	tool := NewSubAgentTool(mp, types.Model{ID: "test-model", Provider: "mock", API: "mock"}, nil, nil, nil, nil, 0)
 
 	params := &SubAgentParams{
 		Task:    "Do something",
@@ -331,7 +423,7 @@ func TestSubAgentTool_PassesToolsToSubagent(t *testing.T) {
 	reg.Register(NewLsTool("/tmp", 50000))
 	reg.Register(NewBashTool("/tmp", 50000, false))
 
-	tool := NewSubAgentTool(mp, types.Model{ID: "test-model", Provider: "mock", API: "mock"}, reg, reg.Names(), nil)
+	tool := NewSubAgentTool(mp, types.Model{ID: "test-model", Provider: "mock", API: "mock"}, nil, reg, reg.Names(), nil, 0)
 
 	params := &SubAgentParams{
 		Task: "Do something",
@@ -378,7 +470,7 @@ func TestSubAgentTool_NoRegistry_NoTools(t *testing.T) {
 		},
 	}
 
-	tool := NewSubAgentTool(mp, types.Model{ID: "test-model", Provider: "mock", API: "mock"}, nil, nil, nil)
+	tool := NewSubAgentTool(mp, types.Model{ID: "test-model", Provider: "mock", API: "mock"}, nil, nil, nil, nil, 0)
 
 	params := &SubAgentParams{
 		Task: "Do something",
@@ -410,7 +502,7 @@ func TestSubAgentTool_E2E_Ollama(t *testing.T) {
 	reg.Register(NewReadTool("/tmp", 50000))
 	reg.Register(NewLsTool("/tmp", 50000))
 
-	tool := NewSubAgentTool(ollama, model, reg, reg.Names(), nil)
+	tool := NewSubAgentTool(ollama, model, nil, reg, reg.Names(), nil, 0)
 
 	params := &SubAgentParams{
 		Task:         "Say exactly: E2E subagent test passed",
@@ -461,7 +553,7 @@ func TestSubAgentTool_E2E_WithTools(t *testing.T) {
 	readTool := NewReadTool(tmpDir, 50000)
 	reg.Register(readTool)
 
-	tool := NewSubAgentTool(ollama, model, reg, reg.Names(), nil)
+	tool := NewSubAgentTool(ollama, model, nil, reg, reg.Names(), nil, 0)
 
 	params := &SubAgentParams{
 		Task:         fmt.Sprintf("Use the read tool to read the file at path '%s/greeting.txt'. Return ONLY the file contents, nothing else.", tmpDir),
@@ -651,13 +743,19 @@ func (m *testutilMockProvider) Complete(ctx context.Context, model types.Model, 
 
 // capturingMockProvider records what was passed to Stream() for verification.
 type capturingMockProvider struct {
+	name          string // optional override for Name(), defaults to "capturing-mock"
 	events        []types.StreamEvent
 	onStream      func(types.Model)
 	onStreamOpts  func(types.StreamOptions)
 	onStreamTools func([]types.ToolDefinition)
 }
 
-func (m *capturingMockProvider) Name() string { return "capturing-mock" }
+func (m *capturingMockProvider) Name() string {
+	if m.name != "" {
+		return m.name
+	}
+	return "capturing-mock"
+}
 
 func (m *capturingMockProvider) Stream(ctx context.Context, model types.Model, messages []types.AgentMessage, tools []types.ToolDefinition, opts types.StreamOptions) <-chan types.StreamEvent {
 	if m.onStream != nil {
@@ -734,7 +832,7 @@ func TestSubAgentTool_Execute_AgentName(t *testing.T) {
 		},
 	}
 
-	tool := NewSubAgentTool(mp, types.Model{ID: "test-model", Provider: "mock", API: "mock"}, reg, reg.Names(), agents)
+	tool := NewSubAgentTool(mp, types.Model{ID: "test-model", Provider: "mock", API: "mock"}, nil, reg, reg.Names(), agents, 0)
 
 	params := &SubAgentParams{
 		Task:      "Say hello",
@@ -765,7 +863,7 @@ func TestSubAgentTool_Execute_AgentName_NotFound(t *testing.T) {
 	reg := NewRegistry()
 	agents := map[string]*subagent.AgentDefinition{}
 
-	tool := NewSubAgentTool(mp, types.Model{ID: "test-model", Provider: "mock", API: "mock"}, reg, reg.Names(), agents)
+	tool := NewSubAgentTool(mp, types.Model{ID: "test-model", Provider: "mock", API: "mock"}, nil, reg, reg.Names(), agents, 0)
 
 	params := &SubAgentParams{
 		Task:      "Do something",
@@ -818,7 +916,7 @@ func TestSubAgentTool_Execute_AgentName_ToolFiltering(t *testing.T) {
 		},
 	}
 
-	tool := NewSubAgentTool(mp, types.Model{ID: "test-model", Provider: "mock", API: "mock"}, reg, reg.Names(), agents)
+	tool := NewSubAgentTool(mp, types.Model{ID: "test-model", Provider: "mock", API: "mock"}, nil, reg, reg.Names(), agents, 0)
 
 	params := &SubAgentParams{
 		Task:      "Read a file",
@@ -867,7 +965,7 @@ func TestSubAgentTool_Execute_AgentName_NoTools(t *testing.T) {
 		},
 	}
 
-	tool := NewSubAgentTool(mp, types.Model{ID: "test-model", Provider: "mock", API: "mock"}, reg, reg.Names(), agents)
+	tool := NewSubAgentTool(mp, types.Model{ID: "test-model", Provider: "mock", API: "mock"}, nil, reg, reg.Names(), agents, 0)
 
 	params := &SubAgentParams{
 		Task:      "Do something",
@@ -882,5 +980,297 @@ func TestSubAgentTool_Execute_AgentName_NoTools(t *testing.T) {
 	// Should have all parent tools (excluding subagent itself)
 	if len(capturedTools) < 2 {
 		t.Errorf("expected at least 2 tools, got %d", len(capturedTools))
+	}
+}
+
+// TestSubAgentTool_ResolveModel_PriorityChain tests the full model resolution
+// priority chain with a real provider registry.
+func TestSubAgentTool_ResolveModel_PriorityChain(t *testing.T) {
+	// Set up a provider registry with two providers.
+	// Each mock's Name() must match its model's Provider field for resolution to work.
+	provReg := provider.NewRegistry()
+
+	// Provider "mock-a" with model "model-a"
+	mockA := &capturingMockProvider{
+		name: "mock-a",
+		events: []types.StreamEvent{
+			{Type: types.EventStart},
+			{Type: types.EventTextDelta, Delta: "A"},
+			{Type: types.EventDone, Message: &types.AgentMessage{}},
+		},
+	}
+	provReg.Register(mockA)
+	provReg.Models().Register(types.Model{
+		ID:       "model-a",
+		Name:     "Model A",
+		Provider: "mock-a",
+		API:      "mock-a-api",
+	})
+
+	// Provider "mock-b" with model "model-b"
+	mockB := &capturingMockProvider{
+		name: "mock-b",
+		events: []types.StreamEvent{
+			{Type: types.EventStart},
+			{Type: types.EventTextDelta, Delta: "B"},
+			{Type: types.EventDone, Message: &types.AgentMessage{}},
+		},
+	}
+	provReg.Register(mockB)
+	provReg.Models().Register(types.Model{
+		ID:       "model-b",
+		Name:     "Model B",
+		Provider: "mock-b",
+		API:      "mock-b-api",
+	})
+
+	// Subagent default models list (for step 4 fallback testing)
+	// We'll override it temporarily
+	origDefaults := subagentDefaultModels
+	subagentDefaultModels = []subagentDefaultCandidate{
+		{ModelID: "model-b", Provider: "mock-b"},
+	}
+	defer func() { subagentDefaultModels = origDefaults }()
+
+	t.Run("step1: frontmatter model wins over prompt model", func(t *testing.T) {
+		parentModel := types.Model{
+			ID:       "model-a",
+			Provider: "mock-a",
+			API:      "mock-a-api",
+		}
+		tool := NewSubAgentTool(mockA, parentModel, provReg, nil, nil, map[string]*subagent.AgentDefinition{
+			"test-agent": {
+				Name:         "test-agent",
+				Description:  "Test agent",
+				SystemPrompt: "Test",
+				Model:        "model-b", // frontmatter model
+			},
+		}, 0)
+
+		var capturedModel types.Model
+		mockA.onStream = func(m types.Model) { capturedModel = m }
+		mockB.onStream = func(m types.Model) { capturedModel = m }
+
+		_, err := tool.Execute(context.Background(), &SubAgentParams{
+			Task:      "test",
+			Model:     "model-a", // prompt model should be overridden by frontmatter
+			AgentName: "test-agent",
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if capturedModel.ID != "model-b" {
+			t.Errorf("expected model 'model-b' (from frontmatter), got %q", capturedModel.ID)
+		}
+		if capturedModel.Provider != "mock-b" {
+			t.Errorf("expected provider 'mock-b', got %q", capturedModel.Provider)
+		}
+	})
+
+	t.Run("step2: prompt model used when no frontmatter", func(t *testing.T) {
+		var capturedModel types.Model
+		mockB.onStream = func(m types.Model) { capturedModel = m }
+
+		parentModel := types.Model{
+			ID:       "model-a",
+			Provider: "mock-a",
+			API:      "mock-a-api",
+		}
+		tool := NewSubAgentTool(mockA, parentModel, provReg, nil, nil, nil, 0)
+
+		_, err := tool.Execute(context.Background(), &SubAgentParams{
+			Task:  "test",
+			Model: "model-b",
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if capturedModel.ID != "model-b" {
+			t.Errorf("expected model 'model-b' (from prompt), got %q", capturedModel.ID)
+		}
+		if capturedModel.Provider != "mock-b" {
+			t.Errorf("expected provider 'mock-b', got %q", capturedModel.Provider)
+		}
+	})
+
+	t.Run("step3: parent model used when no frontmatter or prompt", func(t *testing.T) {
+		var capturedModel types.Model
+		mockA.onStream = func(m types.Model) { capturedModel = m }
+
+		parentModel := types.Model{
+			ID:       "model-a",
+			Provider: "mock-a",
+			API:      "mock-a-api",
+		}
+		tool := NewSubAgentTool(mockA, parentModel, provReg, nil, nil, nil, 0)
+
+		_, err := tool.Execute(context.Background(), &SubAgentParams{
+			Task: "test",
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if capturedModel.ID != "model-a" {
+			t.Errorf("expected model 'model-a' (from parent), got %q", capturedModel.ID)
+		}
+		if capturedModel.Provider != "mock-a" {
+			t.Errorf("expected provider 'mock-a', got %q", capturedModel.Provider)
+		}
+	})
+
+	t.Run("step4: fallback to subagent defaults when parent model provider unavailable", func(t *testing.T) {
+		// Set parent model to a provider that doesn't exist in the registry
+		parentModel := types.Model{
+			ID:       "ghost-model",
+			Provider: "ghost-provider",
+			API:      "ghost-api",
+		}
+
+		var capturedModel types.Model
+		mockB.onStream = func(m types.Model) { capturedModel = m }
+
+		tool := NewSubAgentTool(mockB, parentModel, provReg, nil, nil, nil, 0)
+
+		_, err := tool.Execute(context.Background(), &SubAgentParams{
+			Task: "test",
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		// Should fall back to model-b from subagentDefaultModels
+		if capturedModel.ID != "model-b" {
+			t.Errorf("expected fallback model 'model-b', got %q", capturedModel.ID)
+		}
+		if capturedModel.Provider != "mock-b" {
+			t.Errorf("expected provider 'mock-b', got %q", capturedModel.Provider)
+		}
+	})
+
+	t.Run("cross-provider: ollama model with anthropic parent", func(t *testing.T) {
+		// Simulate the real-world bug scenario: parent is anthropic,
+		// user requests an ollama model
+		parentModel := types.Model{
+			ID:       "claude-sonnet-4-20250514",
+			Provider: "anthropic",
+			API:      "anthropic-messages",
+		}
+
+		// Create an ollama mock provider
+		mockOllama := &capturingMockProvider{
+			name: "ollama",
+			events: []types.StreamEvent{
+				{Type: types.EventStart},
+				{Type: types.EventTextDelta, Delta: "ollama"},
+				{Type: types.EventDone, Message: &types.AgentMessage{}},
+			},
+		}
+		provReg.Register(mockOllama)
+		provReg.Models().Register(types.Model{
+			ID:       "ministral-3:14b",
+			Name:     "Ministral 3B 14b",
+			Provider: "ollama",
+			API:      "ollama-chat",
+		})
+
+		var capturedModel types.Model
+		mockOllama.onStream = func(m types.Model) { capturedModel = m }
+
+		tool := NewSubAgentTool(mockA, parentModel, provReg, nil, nil, nil, 0)
+
+		_, err := tool.Execute(context.Background(), &SubAgentParams{
+			Task:  "test",
+			Model: "ministral-3:14b",
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if capturedModel.ID != "ministral-3:14b" {
+			t.Errorf("expected model 'ministral-3:14b', got %q", capturedModel.ID)
+		}
+		if capturedModel.Provider != "ollama" {
+			t.Errorf("expected provider 'ollama', got %q", capturedModel.Provider)
+		}
+		if capturedModel.API != "ollama-chat" {
+			t.Errorf("expected API 'ollama-chat', got %q", capturedModel.API)
+		}
+	})
+}
+
+// TestSubAgentTool_ResolveModel_LegacyFallback verifies that when provReg is nil,
+// the old behavior of inheriting parent provider is preserved for backward compat.
+func TestSubAgentTool_ResolveModel_LegacyFallback(t *testing.T) {
+	var capturedModel types.Model
+	mp := &capturingMockProvider{
+		events: []types.StreamEvent{
+			{Type: types.EventStart},
+			{Type: types.EventTextDelta, Delta: "done"},
+			{Type: types.EventDone, Message: &types.AgentMessage{}},
+		},
+		onStream: func(model types.Model) {
+			capturedModel = model
+		},
+	}
+
+	// No provider registry (nil) — legacy behavior
+	parentModel := types.Model{
+		ID:       "parent-model",
+		Provider: "mock",
+		API:      "mock-api",
+	}
+	tool := NewSubAgentTool(mp, parentModel, nil, nil, nil, nil, 0)
+
+	_, err := tool.Execute(context.Background(), &SubAgentParams{
+		Task:  "test",
+		Model: "different-model", // Should use this model ID but inherit parent provider
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if capturedModel.ID != "different-model" {
+		t.Errorf("expected model ID 'different-model', got %q", capturedModel.ID)
+	}
+	if capturedModel.Provider != "mock" {
+		t.Errorf("expected inherited provider 'mock', got %q", capturedModel.Provider)
+	}
+	if capturedModel.API != "mock-api" {
+		t.Errorf("expected inherited API 'mock-api', got %q", capturedModel.API)
+	}
+}
+
+func TestSubAgentTool_UpdateParentModel(t *testing.T) {
+	mp := &testutilMockProvider{}
+	parentModel := types.Model{
+		ID:       "parent-model",
+		Provider: "mock",
+		API:      "mock-api",
+	}
+	tool := NewSubAgentTool(mp, parentModel, nil, nil, nil, nil, 0)
+
+	// Verify initial state
+	if tool.model.ID != "parent-model" {
+		t.Errorf("initial model ID = %q, want parent-model", tool.model.ID)
+	}
+	if tool.model.Provider != "mock" {
+		t.Errorf("initial provider = %q, want mock", tool.model.Provider)
+	}
+
+	// Update parent model
+	newModel := types.Model{
+		ID:       "new-model",
+		Provider: "new-provider",
+		API:      "new-api",
+	}
+	newProv := &testutilMockProvider{}
+	tool.UpdateParentModel(newProv, newModel)
+
+	// Verify updated state
+	if tool.model.ID != "new-model" {
+		t.Errorf("updated model ID = %q, want new-model", tool.model.ID)
+	}
+	if tool.model.Provider != "new-provider" {
+		t.Errorf("updated provider = %q, want new-provider", tool.model.Provider)
+	}
+	if tool.prov != newProv {
+		t.Error("updated provider instance not set correctly")
 	}
 }

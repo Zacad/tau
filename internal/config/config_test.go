@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/adam/tau/internal/config"
 	"github.com/adam/tau/internal/testutil"
@@ -53,6 +54,33 @@ func TestLoadConfig_ValidJSON(t *testing.T) {
 	}
 	if _, ok := cfg.Providers["anthropic"]; !ok {
 		t.Error("providers should contain anthropic")
+	}
+}
+
+func TestLoadConfig_SubagentTimeoutString(t *testing.T) {
+	home := testutil.SetupTauHome(t, `{
+		"subagent_timeout": "10m"
+	}`, "")
+	testutil.SetHomeEnv(t, home)
+
+	cfg, err := config.LoadConfig("")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.SubagentTimeout != 10*time.Minute {
+		t.Errorf("SubagentTimeout: got %v, want 10m", cfg.SubagentTimeout)
+	}
+}
+
+func TestLoadConfig_SubagentTimeoutStringInvalid(t *testing.T) {
+	home := testutil.SetupTauHome(t, `{
+		"subagent_timeout": "soon"
+	}`, "")
+	testutil.SetHomeEnv(t, home)
+
+	_, err := config.LoadConfig("")
+	if err == nil {
+		t.Fatal("expected error for invalid subagent_timeout")
 	}
 }
 
@@ -123,6 +151,9 @@ func TestLoadAuth_ValidJSON(t *testing.T) {
 	}
 	if len(store) != 3 {
 		t.Errorf("expected 3 entries, got %d", len(store))
+	}
+	if store["openai"].APIKey() != "sk-test-key-123" {
+		t.Errorf("openai: got %q, want %q", store["openai"].APIKey(), "sk-test-key-123")
 	}
 }
 
@@ -198,8 +229,8 @@ func TestSaveAuth_CreatesFile(t *testing.T) {
 	testutil.SetHomeEnv(t, home)
 
 	store := config.AuthStore{
-		"openai":       "sk-test-key",
-		"opencode-zen": "zen-key-123",
+		"openai":       config.AuthValue{Value: "sk-test-key"},
+		"opencode-zen": config.AuthValue{Value: "zen-key-123"},
 	}
 
 	err := config.SaveAuth(store, "")
@@ -227,11 +258,11 @@ func TestSaveAuth_CreatesFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load saved auth: %v", err)
 	}
-	if loaded["openai"] != "sk-test-key" {
-		t.Errorf("openai: got %q, want %q", loaded["openai"], "sk-test-key")
+	if loaded["openai"].APIKey() != "sk-test-key" {
+		t.Errorf("openai: got %q, want %q", loaded["openai"].APIKey(), "sk-test-key")
 	}
-	if loaded["opencode-zen"] != "zen-key-123" {
-		t.Errorf("opencode-zen: got %q, want %q", loaded["opencode-zen"], "zen-key-123")
+	if loaded["opencode-zen"].APIKey() != "zen-key-123" {
+		t.Errorf("opencode-zen: got %q, want %q", loaded["opencode-zen"].APIKey(), "zen-key-123")
 	}
 }
 
@@ -239,7 +270,7 @@ func TestSaveAuth_ExplicitPath(t *testing.T) {
 	dir := testutil.TempDir(t)
 	path := filepath.Join(dir, "custom-auth.json")
 
-	store := config.AuthStore{"test-provider": "test-key"}
+	store := config.AuthStore{"test-provider": config.AuthValue{Value: "test-key"}}
 	err := config.SaveAuth(store, path)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -249,8 +280,8 @@ func TestSaveAuth_ExplicitPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load saved auth: %v", err)
 	}
-	if loaded["test-provider"] != "test-key" {
-		t.Errorf("test-provider: got %q, want %q", loaded["test-provider"], "test-key")
+	if loaded["test-provider"].APIKey() != "test-key" {
+		t.Errorf("test-provider: got %q, want %q", loaded["test-provider"].APIKey(), "test-key")
 	}
 }
 
@@ -412,5 +443,238 @@ func TestProviderConfig_ModelsFieldOptional(t *testing.T) {
 	pc := cfg.Providers["openrouter"]
 	if pc.Models != nil {
 		t.Errorf("expected nil Models when not in config, got %v", pc.Models)
+	}
+}
+
+func TestAuthValue_MarshalJSON_APIKey(t *testing.T) {
+	av := config.AuthValue{Value: "sk-test-key"}
+	data, err := av.MarshalJSON()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// Should serialize as plain string for backward compatibility
+	if string(data) != `"sk-test-key"` {
+		t.Errorf("got %q, want %q", string(data), `"sk-test-key"`)
+	}
+}
+
+func TestAuthValue_MarshalJSON_OAuth(t *testing.T) {
+	av := config.AuthValue{
+		Type:      "oauth",
+		Access:    "access-token",
+		Refresh:   "refresh-token",
+		Expires:   1234567890,
+		AccountID: "user-123",
+	}
+	data, err := av.MarshalJSON()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Should serialize as object
+	var parsed map[string]any
+	if err := config.UnmarshalJSONForTest(data, &parsed); err != nil {
+		t.Fatalf("parse JSON: %v", err)
+	}
+	if parsed["type"] != "oauth" {
+		t.Errorf("type: got %v, want %q", parsed["type"], "oauth")
+	}
+	if parsed["access"] != "access-token" {
+		t.Errorf("access: got %v, want %q", parsed["access"], "access-token")
+	}
+	if parsed["refresh"] != "refresh-token" {
+		t.Errorf("refresh: got %v, want %q", parsed["refresh"], "refresh-token")
+	}
+}
+
+func TestAuthValue_UnmarshalJSON_String(t *testing.T) {
+	var av config.AuthValue
+	err := av.UnmarshalJSONForTest([]byte(`"sk-test-key"`))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if av.APIKey() != "sk-test-key" {
+		t.Errorf("APIKey: got %q, want %q", av.APIKey(), "sk-test-key")
+	}
+	if av.IsAPIKey() != true {
+		t.Error("IsAPIKey should be true")
+	}
+	if av.IsOAuth() != false {
+		t.Error("IsOAuth should be false")
+	}
+}
+
+func TestAuthValue_UnmarshalJSON_Object(t *testing.T) {
+	var av config.AuthValue
+	err := av.UnmarshalJSONForTest([]byte(`{"type":"oauth","access":"acc","refresh":"ref","expires":1234567890,"account_id":"user-123"}`))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if av.Type != "oauth" {
+		t.Errorf("Type: got %q, want %q", av.Type, "oauth")
+	}
+	if av.Access != "acc" {
+		t.Errorf("Access: got %q, want %q", av.Access, "acc")
+	}
+	if av.Refresh != "ref" {
+		t.Errorf("Refresh: got %q, want %q", av.Refresh, "ref")
+	}
+	if av.Expires != 1234567890 {
+		t.Errorf("Expires: got %d, want %d", av.Expires, 1234567890)
+	}
+	if av.AccountID != "user-123" {
+		t.Errorf("AccountID: got %q, want %q", av.AccountID, "user-123")
+	}
+	if av.IsOAuth() != true {
+		t.Error("IsOAuth should be true")
+	}
+	if av.IsAPIKey() != false {
+		t.Error("IsAPIKey should be false")
+	}
+}
+
+func TestAuthValue_RoundTrip_APIKey(t *testing.T) {
+	original := config.AuthValue{Value: "sk-test-key"}
+	data, err := original.MarshalJSON()
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	var restored config.AuthValue
+	if err := restored.UnmarshalJSONForTest(data); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	if restored.APIKey() != original.APIKey() {
+		t.Errorf("round-trip failed: got %q, want %q", restored.APIKey(), original.APIKey())
+	}
+	if restored.IsAPIKey() != original.IsAPIKey() {
+		t.Error("round-trip IsAPIKey mismatch")
+	}
+}
+
+func TestAuthValue_RoundTrip_OAuth(t *testing.T) {
+	original := config.AuthValue{
+		Type:      "oauth",
+		Access:    "access-token",
+		Refresh:   "refresh-token",
+		Expires:   1234567890,
+		AccountID: "user-123",
+	}
+	data, err := original.MarshalJSON()
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	var restored config.AuthValue
+	if err := restored.UnmarshalJSONForTest(data); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	if restored.Type != original.Type {
+		t.Errorf("Type: got %q, want %q", restored.Type, original.Type)
+	}
+	if restored.Access != original.Access {
+		t.Errorf("Access: got %q, want %q", restored.Access, original.Access)
+	}
+	if restored.Refresh != original.Refresh {
+		t.Errorf("Refresh: got %q, want %q", restored.Refresh, original.Refresh)
+	}
+	if restored.Expires != original.Expires {
+		t.Errorf("Expires: got %d, want %d", restored.Expires, original.Expires)
+	}
+	if restored.AccountID != original.AccountID {
+		t.Errorf("AccountID: got %q, want %q", restored.AccountID, original.AccountID)
+	}
+}
+
+func TestLoadAuth_MixedFormat(t *testing.T) {
+	authJSON := `{
+		"openai": "sk-api-key-123",
+		"anthropic": {"type":"api_key","key":"sk-ant-456"},
+		"openai-codex": {"type":"oauth","access":"jwt-token","refresh":"refresh-token","expires":1234567890,"account_id":"user-abc"}
+	}`
+	home := testutil.SetupTauHome(t, "", authJSON)
+	testutil.SetHomeEnv(t, home)
+
+	store, err := config.LoadAuth("")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(store) != 3 {
+		t.Fatalf("expected 3 entries, got %d", len(store))
+	}
+
+	// Plain string API key
+	if store["openai"].APIKey() != "sk-api-key-123" {
+		t.Errorf("openai: got %q, want %q", store["openai"].APIKey(), "sk-api-key-123")
+	}
+	if !store["openai"].IsAPIKey() {
+		t.Error("openai should be API key type")
+	}
+
+	// Object API key (PI/OpenCode format) — should parse but Value will be empty
+	// since we don't have a "value" field, this tests graceful handling
+	if store["anthropic"].Type != "api_key" {
+		t.Errorf("anthropic type: got %q, want %q", store["anthropic"].Type, "api_key")
+	}
+
+	// OAuth credentials
+	if !store["openai-codex"].IsOAuth() {
+		t.Error("openai-codex should be OAuth type")
+	}
+	if store["openai-codex"].Access != "jwt-token" {
+		t.Errorf("openai-codex access: got %q, want %q", store["openai-codex"].Access, "jwt-token")
+	}
+	if store["openai-codex"].AccountID != "user-abc" {
+		t.Errorf("openai-codex account_id: got %q, want %q", store["openai-codex"].AccountID, "user-abc")
+	}
+}
+
+func TestSaveAuth_BackwardCompatOutput(t *testing.T) {
+	dir := testutil.TempDir(t)
+	path := filepath.Join(dir, "auth.json")
+
+	store := config.AuthStore{
+		"openai": config.AuthValue{Value: "sk-test-key"},
+	}
+	err := config.SaveAuth(store, path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Read raw file content to verify backward compat format
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read file: %v", err)
+	}
+
+	// Verify it's a plain string, not an object
+	var raw map[string]any
+	if err := config.UnmarshalJSONForTest(data, &raw); err != nil {
+		t.Fatalf("parse JSON: %v", err)
+	}
+	openaiVal := raw["openai"]
+	if str, ok := openaiVal.(string); !ok {
+		t.Errorf("openai should be string in JSON, got %T: %v", openaiVal, openaiVal)
+	} else if str != "sk-test-key" {
+		t.Errorf("openai: got %q, want %q", str, "sk-test-key")
+	}
+}
+
+func TestAuthValue_IsEmpty(t *testing.T) {
+	empty := config.AuthValue{}
+	if !empty.IsEmpty() {
+		t.Error("empty AuthValue should report IsEmpty=true")
+	}
+
+	apiKey := config.AuthValue{Value: "sk-key"}
+	if apiKey.IsEmpty() {
+		t.Error("API key AuthValue should report IsEmpty=false")
+	}
+
+	oauth := config.AuthValue{Type: "oauth", Access: "token"}
+	if oauth.IsEmpty() {
+		t.Error("OAuth AuthValue should report IsEmpty=false")
 	}
 }

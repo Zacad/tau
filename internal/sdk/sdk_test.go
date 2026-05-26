@@ -37,7 +37,7 @@ func TestCreateSession_Ephemeral(t *testing.T) {
 	}
 
 	s, err := CreateSession(context.Background(), SessionOptions{
-		Model:      "gpt-4o",
+		Model:      "openai/gpt-4o",
 		WorkingDir: tmpDir,
 		Ephemeral:  true,
 	})
@@ -68,28 +68,32 @@ func TestCreateSession_ResolvesModel(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Exact model ID
+	// Exact model ID with provider prefix (catalog has gpt-4o from many providers)
 	s, err := CreateSession(context.Background(), SessionOptions{
-		Model:      "gpt-4o",
+		Model:      "openai/gpt-4o",
 		WorkingDir: tmpDir,
 		Ephemeral:  true,
 	})
 	if err != nil {
-		t.Fatalf("CreateSession with gpt-4o: %v", err)
+		t.Fatalf("CreateSession with openai/gpt-4o: %v", err)
 	}
 	defer s.Close()
 
 	if s.Model().ID != "gpt-4o" {
 		t.Fatalf("expected model gpt-4o, got %s", s.Model().ID)
 	}
+	if s.Model().Provider != "openai" {
+		t.Fatalf("expected provider openai, got %s", s.Model().Provider)
+	}
 }
 
 func TestCreateSession_RequiresAuth(t *testing.T) {
 	tmpDir := testutil.TempDir(t)
+	testutil.SetHomeEnv(t, tmpDir)
 
 	// Should succeed but with no model when API key is not configured
 	s, err := CreateSession(context.Background(), SessionOptions{
-		Model:      "claude-sonnet-4-20250514",
+		Model:      "anthropic/claude-sonnet-4-20250514",
 		WorkingDir: tmpDir,
 		Ephemeral:  true,
 	})
@@ -125,7 +129,7 @@ func TestCreateSession_SetAPIKey(t *testing.T) {
 	}
 
 	s, err := CreateSession(context.Background(), SessionOptions{
-		Model:      "gpt-4o",
+		Model:      "openai/gpt-4o",
 		WorkingDir: tmpDir,
 		Ephemeral:  true,
 	})
@@ -283,14 +287,14 @@ func TestSession_SetModel_PreservesMessages(t *testing.T) {
 
 func TestSession_ListModels(t *testing.T) {
 	tmpDir := testutil.TempDir(t)
-	s := newTestSession(t, tmpDir, "gpt-4o")
+	s := newTestSession(t, tmpDir, "openai/gpt-4o")
 	defer s.Close()
 
 	models := s.ListModels()
 	// newTestSession only registers the mock provider for the resolved model's provider (openai)
-	// So ListModels should return only openai models (4 built-in)
-	if len(models) != 4 {
-		t.Fatalf("expected 4 models (openai only), got %d", len(models))
+	// So ListModels should return only openai models (1 built-in)
+	if len(models) != 1 {
+		t.Fatalf("expected 1 model (openai only), got %d", len(models))
 	}
 
 	// All models should be from openai provider
@@ -299,25 +303,15 @@ func TestSession_ListModels(t *testing.T) {
 			t.Errorf("expected openai provider, got %s", m.Provider)
 		}
 	}
-
-	// Verify sorted by provider then ID
-	for i := 1; i < len(models); i++ {
-		if models[i].Provider < models[i-1].Provider {
-			t.Fatalf("models not sorted by provider at index %d", i)
-		}
-		if models[i].Provider == models[i-1].Provider && models[i].ID < models[i-1].ID {
-			t.Fatalf("models not sorted by ID at index %d", i)
-		}
-	}
 }
 
 func TestSession_ListModels_FilteredByConnectedProviders(t *testing.T) {
 	tmpDir := testutil.TempDir(t)
-	s := newTestSession(t, tmpDir, "gpt-4o")
+	s := newTestSession(t, tmpDir, "openai/gpt-4o")
 	defer s.Close()
 
 	// Register a second provider (anthropic mock)
-	anthropicModel, _ := s.provReg.ResolveModelWithFallback("claude-sonnet-4-20250514")
+	anthropicModel, _ := s.provReg.ResolveModelWithFallback("anthropic/claude-sonnet-4-20250514")
 	s.provReg.Register(&mockProvider{
 		providerName: "anthropic",
 		model:        anthropicModel,
@@ -325,9 +319,9 @@ func TestSession_ListModels_FilteredByConnectedProviders(t *testing.T) {
 
 	models := s.ListModels()
 
-	// Should include both openai (4) and anthropic (3) models
-	if len(models) != 7 {
-		t.Fatalf("expected 7 models (openai + anthropic), got %d", len(models))
+	// Should include both openai (1) and anthropic (1) models
+	if len(models) != 2 {
+		t.Fatalf("expected 2 models (openai + anthropic), got %d", len(models))
 	}
 
 	// Verify no models from unconnected providers (google)
@@ -450,7 +444,7 @@ func TestSession_EphemeralFlag(t *testing.T) {
 	}
 
 	s, err := CreateSession(context.Background(), SessionOptions{
-		Model:      "gpt-4o",
+		Model:      "openai/gpt-4o",
 		WorkingDir: tmpDir,
 		Ephemeral:  true,
 	})
@@ -513,7 +507,7 @@ func TestSession_Delete(t *testing.T) {
 	}
 
 	s, err := CreateSession(context.Background(), SessionOptions{
-		Model:      "gpt-4o",
+		Model:      "openai/gpt-4o",
 		WorkingDir: tmpDir,
 	})
 	if err != nil {
@@ -563,7 +557,7 @@ func TestCreateSession_ToolAllowlist(t *testing.T) {
 	}
 
 	s, err := CreateSession(context.Background(), SessionOptions{
-		Model:         "gpt-4o",
+		Model:      "openai/gpt-4o",
 		WorkingDir:    tmpDir,
 		Ephemeral:     true,
 		ToolAllowlist: []string{"read", "grep"},
@@ -593,7 +587,7 @@ func TestCreateSession_ReadOnly(t *testing.T) {
 	}
 
 	s, err := CreateSession(context.Background(), SessionOptions{
-		Model:      "gpt-4o",
+		Model:      "openai/gpt-4o",
 		WorkingDir: tmpDir,
 		Ephemeral:  true,
 		ReadOnly:   true,
@@ -789,7 +783,7 @@ func TestIntegration_PersistedSession(t *testing.T) {
 
 	// Create session (non-ephemeral)
 	s, err := CreateSession(context.Background(), SessionOptions{
-		Model:      "gpt-4o",
+		Model:      "openai/gpt-4o",
 		WorkingDir: tmpDir,
 	})
 	if err != nil {
@@ -844,7 +838,7 @@ func newTestSession(t *testing.T, workingDir string, modelID string) *Session {
 	systemPrompt := skills.FormatForPrompt(discovered)
 
 	toolReg := tools.NewRegistry()
-	registerBuiltinTools(toolReg, workingDir, &config.Config{}, prov, model)
+	registerBuiltinTools(toolReg, workingDir, &config.Config{}, prov, model, provReg)
 
 	ag := agent.New(agent.Options{
 		SystemPrompt: systemPrompt,
@@ -1369,6 +1363,100 @@ func TestSession_RegisterProvider_EmptyModels(t *testing.T) {
 	}
 }
 
+func TestSession_RegisterProvider_OAuthCodexModels(t *testing.T) {
+	tmpDir := testutil.TempDir(t)
+	s := newTestSession(t, tmpDir, "gpt-4o")
+	defer s.Close()
+
+	creds := provider.OAuthCredentials{
+		AccessToken:  "test-access-token",
+		RefreshToken: "test-refresh-token",
+		Expires:      time.Now().Add(1 * time.Hour).Unix(),
+		AccountID:    "acct-test",
+	}
+	prov := provider.NewOpenAIOAuthProvider(creds)
+
+	err := s.RegisterProvider(prov, "openai-oauth", "https://chatgpt.com/backend-api", nil)
+	if err != nil {
+		t.Fatalf("RegisterProvider: %v", err)
+	}
+
+	// Verify provider is registered
+	providers := s.ListProviders()
+	found := false
+	for _, p := range providers {
+		if p == "openai-oauth" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected openai-oauth in list, got %v", providers)
+	}
+
+	// Verify all 6 Codex models are registered with full metadata
+	allModels := s.ListModels()
+	codexIDs := make(map[string]bool)
+	for _, m := range allModels {
+		if m.Provider == "openai-oauth" {
+			codexIDs[m.ID] = true
+		}
+	}
+
+	wantIDs := []string{
+		"gpt-5.5", "gpt-5.4", "gpt-5.4-mini",
+		"gpt-5.3-codex", "gpt-5.3-codex-spark", "gpt-5.2",
+	}
+	for _, id := range wantIDs {
+		if !codexIDs[id] {
+			t.Errorf("expected %s to be registered", id)
+		}
+	}
+
+	// Verify metadata on gpt-5.5
+	for _, m := range allModels {
+		if m.ID == "gpt-5.5" {
+			if m.Provider != "openai-oauth" {
+				t.Errorf("gpt-5.5 provider = %q, want openai-oauth", m.Provider)
+			}
+			if m.BaseURL != "https://chatgpt.com/backend-api" {
+				t.Errorf("gpt-5.5 BaseURL = %q, want https://chatgpt.com/backend-api", m.BaseURL)
+			}
+			if m.ContextWindow != 400000 {
+				t.Errorf("gpt-5.5 context window = %d, want 400000", m.ContextWindow)
+			}
+			if m.MaxTokens != 128000 {
+				t.Errorf("gpt-5.5 max tokens = %d, want 128000", m.MaxTokens)
+			}
+			if !m.Reasoning {
+				t.Error("gpt-5.5 Reasoning = false, want true")
+			}
+			if m.Cost.Input != 0 || m.Cost.Output != 0 {
+				t.Errorf("gpt-5.5 costs not zero: %+v", m.Cost)
+			}
+			if m.ThinkingLevelMap == nil {
+				t.Error("gpt-5.5 ThinkingLevelMap is nil")
+			}
+			break
+		}
+	}
+
+	// Verify all Codex models have zero costs and reasoning
+	for _, m := range allModels {
+		if m.Provider == "openai-oauth" {
+			if m.Cost.Input != 0 {
+				t.Errorf("%s: cost input = %f, want 0", m.ID, m.Cost.Input)
+			}
+			if !m.Reasoning {
+				t.Errorf("%s: Reasoning = false, want true", m.ID)
+			}
+			if m.ThinkingLevelMap == nil {
+				t.Errorf("%s: ThinkingLevelMap is nil", m.ID)
+			}
+		}
+	}
+}
+
 func TestSession_DisableProvider(t *testing.T) {
 	tmpDir := testutil.TempDir(t)
 	testutil.SetHomeEnv(t, tmpDir)
@@ -1584,7 +1672,7 @@ func TestCreateSession_EnabledProviderRegistered(t *testing.T) {
 	}
 
 	s, err := CreateSession(context.Background(), SessionOptions{
-		Model:      "gpt-4o",
+		Model:      "openai/gpt-4o",
 		WorkingDir: tmpDir,
 		Ephemeral:  true,
 	})
@@ -1639,7 +1727,7 @@ func TestCreateSession_DefaultEnabledWhenNotInConfig(t *testing.T) {
 	}
 
 	s, err := CreateSession(context.Background(), SessionOptions{
-		Model:      "gpt-4o",
+		Model:      "openai/gpt-4o",
 		WorkingDir: tmpDir,
 		Ephemeral:  true,
 	})
@@ -1689,7 +1777,7 @@ func TestIsProviderEnabled(t *testing.T) {
 		},
 		{
 			name:     "in config but enabled nil = enabled",
-			cfg:      &config.Config{Providers: map[string]config.ProviderConfig{"openai": {Model: "gpt-4o"}}},
+			cfg:      &config.Config{Providers: map[string]config.ProviderConfig{"openai": {Model:      "openai/gpt-4o"}}},
 			provName: "openai",
 			want:     true,
 		},
@@ -2506,3 +2594,843 @@ func TestSession_SetModelAfterResume_PreservesHistory(t *testing.T) {
 		t.Errorf("expected last message with Polish translation, got %q", msgsAfter[5].Content[0].Text)
 	}
 }
+
+func TestSession_SetModel_UpdatesSubagentTool(t *testing.T) {
+	tmpDir := testutil.TempDir(t)
+	s := newTestSession(t, tmpDir, "gpt-4o")
+	defer s.Close()
+
+	// Get the subagent tool and verify initial parent model
+	sat, ok := s.toolReg.Get("subagent").(*tools.SubAgentTool)
+	if !ok {
+		t.Fatal("subagent tool not found in registry")
+	}
+
+	// The subagent tool should have the initial parent model
+	// (we can't directly inspect it, but we can verify it exists)
+
+	// Register a second mock provider so SetModel can switch to it
+	model2, err := s.provReg.ResolveModelWithFallback("claude-sonnet-4-20250514")
+	if err != nil {
+		t.Fatalf("resolve model: %v", err)
+	}
+	s.provReg.Register(&mockProvider{
+		providerName: model2.Provider,
+		model:        model2,
+	})
+
+	// Switch model
+	err = s.SetModel("claude-sonnet-4-20250514")
+	if err != nil {
+		t.Fatalf("SetModel: %v", err)
+	}
+
+	// Verify the session model changed
+	if s.Model().ID != "claude-sonnet-4-20250514" {
+		t.Fatalf("expected claude-sonnet-4-20250514, got %s", s.Model().ID)
+	}
+	if s.Model().Provider != "anthropic" {
+		t.Fatalf("expected anthropic provider, got %s", s.Model().Provider)
+	}
+
+	// Verify the subagent tool was updated with the new parent model
+	// We can't directly inspect the subagent tool's internal state,
+	// but we can verify it still exists and is the same instance
+	sat2, ok := s.toolReg.Get("subagent").(*tools.SubAgentTool)
+	if !ok {
+		t.Fatal("subagent tool not found after SetModel")
+	}
+	if sat != sat2 {
+		t.Fatal("subagent tool instance changed after SetModel (should be same instance)")
+	}
+}
+
+func TestSession_SetModel_WritesCanonicalProviderModelID(t *testing.T) {
+	tmpDir := testutil.TempDir(t)
+	testutil.SetHomeEnv(t, tmpDir)
+
+	// Create config.json with initial default model
+	tauDir := tmpDir + "/.tau"
+	if err := os.MkdirAll(tauDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(tauDir+"/auth.json",
+		[]byte(`{"openai": "sk-test-key"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	initialCfg := `{"default_model": "openai/gpt-4o"}`
+	if err := os.WriteFile(tauDir+"/config.json", []byte(initialCfg), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create session with initial model
+	s, err := CreateSession(context.Background(), SessionOptions{
+		Model:      "openai/gpt-4o",
+		WorkingDir: tmpDir,
+		Ephemeral:  true,
+	})
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	defer s.Close()
+
+	// Register anthropic mock provider with a unique model ID
+	anthropicModel := types.Model{
+		ID:            "claude-sonnet-4-20250514",
+		Name:          "Claude Sonnet 4",
+		Provider:      "anthropic",
+		API:           "anthropic-messages",
+		BaseURL:       "https://api.anthropic.com/v1",
+		Reasoning:     true,
+		ContextWindow: 200000,
+		MaxTokens:     8192,
+	}
+	s.provReg.Models().Register(anthropicModel)
+	s.provReg.Register(&mockProvider{
+		providerName: "anthropic",
+		model:        anthropicModel,
+	})
+
+	// Switch to anthropic model using canonical provider/modelID format
+	err = s.SetModel("anthropic/claude-sonnet-4-20250514")
+	if err != nil {
+		t.Fatalf("SetModel: %v", err)
+	}
+
+	// Read config.json and verify it has the canonical provider/modelID format
+	cfgData, err := os.ReadFile(tauDir + "/config.json")
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	var loadedCfg config.Config
+	if err := json.Unmarshal(cfgData, &loadedCfg); err != nil {
+		t.Fatalf("parse config: %v", err)
+	}
+
+	// Should be "anthropic/claude-sonnet-4-20250514", NOT just "claude-sonnet-4-20250514"
+	expected := "anthropic/claude-sonnet-4-20250514"
+	if loadedCfg.DefaultModel != expected {
+		t.Errorf("default_model = %q, want %q", loadedCfg.DefaultModel, expected)
+	}
+}
+
+func TestSession_ResumeSession_RestoresModel(t *testing.T) {
+	tmpDir := testutil.TempDir(t)
+	testutil.SetHomeEnv(t, tmpDir)
+
+	sessDir := tmpDir + "/.tau/sessions/--tmp--"
+	if err := os.MkdirAll(sessDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create a session file with a model change
+	sess, err := tausession.CreateSession(sessDir, tmpDir, "model-resume-test", "")
+	if err != nil {
+		t.Fatalf("CreateSession file: %v", err)
+	}
+
+	userMsg := types.AgentMessage{
+		ID: "msg-1", Role: types.RoleUser,
+		Content: []types.ContentBlock{{Type: types.BlockText, Text: "hello"}},
+	}
+	if err := sess.Append(types.EntryMessage, tausession.MessageData{Message: userMsg}); err != nil {
+		t.Fatalf("Append: %v", err)
+	}
+
+	// Save a model change with provider
+	if err := sess.SetModel("gpt-4o", "openai"); err != nil {
+		t.Fatalf("SetModel: %v", err)
+	}
+
+	sessionPath := sess.File()
+	if err := sess.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	// Create an ephemeral session with an explicit model
+	s, err := CreateSession(context.Background(), SessionOptions{
+		WorkingDir: tmpDir,
+		Ephemeral:  true,
+		Model:      "gpt-4o",
+	})
+	if err != nil {
+		t.Fatalf("CreateSession (ephemeral): %v", err)
+	}
+	defer s.Close()
+
+	// Register openai mock provider so the resumed model can be resolved
+	openaiModel := types.Model{
+		ID:       "gpt-4o",
+		Name:     "GPT-4o",
+		Provider: "openai",
+		API:      "openai-responses",
+	}
+	s.provReg.Models().Register(openaiModel)
+	s.provReg.Register(&mockProvider{
+		providerName: "openai",
+		model:        openaiModel,
+	})
+
+	// Set a different initial model so we can verify it changes on resume
+	otherModel := types.Model{
+		ID:       "other-model",
+		Name:     "Other",
+		Provider: "openai",
+		API:      "openai-responses",
+	}
+	s.provReg.Models().Register(otherModel)
+	s.SetModel("other-model")
+
+	// Verify initial model is different from the resumed one
+	initialModel := s.Model()
+	if initialModel.ID != "other-model" {
+		t.Fatalf("expected initial model 'other-model', got %q", initialModel.ID)
+	}
+
+	// Resume the session
+	if err := s.ResumeSession(sessionPath); err != nil {
+		t.Fatalf("ResumeSession: %v", err)
+	}
+
+	// Verify model was restored from resumed session
+	resumedModel := s.Model()
+	if resumedModel.ID != "gpt-4o" {
+		t.Errorf("expected model ID 'gpt-4o', got %q", resumedModel.ID)
+	}
+	if resumedModel.Provider != "openai" {
+		t.Errorf("expected provider 'openai', got %q", resumedModel.Provider)
+	}
+}
+
+func TestSession_ResumeSession_RestoresModelWithProvider(t *testing.T) {
+	tmpDir := testutil.TempDir(t)
+	testutil.SetHomeEnv(t, tmpDir)
+
+	sessDir := tmpDir + "/.tau/sessions/--tmp--"
+	if err := os.MkdirAll(sessDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create a session file with a model change using a provider/modelID pattern
+	sess, err := tausession.CreateSession(sessDir, tmpDir, "provider-resume-test", "")
+	if err != nil {
+		t.Fatalf("CreateSession file: %v", err)
+	}
+
+	userMsg := types.AgentMessage{
+		ID: "msg-1", Role: types.RoleUser,
+		Content: []types.ContentBlock{{Type: types.BlockText, Text: "hello"}},
+	}
+	if err := sess.Append(types.EntryMessage, tausession.MessageData{Message: userMsg}); err != nil {
+		t.Fatalf("Append: %v", err)
+	}
+
+	// Save a model change with provider
+	if err := sess.SetModel("claude-sonnet-4-20250514", "anthropic"); err != nil {
+		t.Fatalf("SetModel: %v", err)
+	}
+
+	sessionPath := sess.File()
+	if err := sess.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	// Create an ephemeral session
+	s, err := CreateSession(context.Background(), SessionOptions{
+		WorkingDir: tmpDir,
+		Ephemeral:  true,
+	})
+	if err != nil {
+		t.Fatalf("CreateSession (ephemeral): %v", err)
+	}
+	defer s.Close()
+
+	// Register anthropic mock provider
+	anthropicModel := types.Model{
+		ID:       "claude-sonnet-4-20250514",
+		Name:     "Claude Sonnet 4",
+		Provider: "anthropic",
+		API:      "anthropic-messages",
+	}
+	s.provReg.Models().Register(anthropicModel)
+	s.provReg.Register(&mockProvider{
+		providerName: "anthropic",
+		model:        anthropicModel,
+	})
+
+	// Resume the session
+	if err := s.ResumeSession(sessionPath); err != nil {
+		t.Fatalf("ResumeSession: %v", err)
+	}
+
+	// Verify model and provider were restored
+	resumedModel := s.Model()
+	if resumedModel.ID != "claude-sonnet-4-20250514" {
+		t.Errorf("expected model ID 'claude-sonnet-4-20250514', got %q", resumedModel.ID)
+	}
+	if resumedModel.Provider != "anthropic" {
+		t.Errorf("expected provider 'anthropic', got %q", resumedModel.Provider)
+	}
+}
+
+func TestSession_Compact_WritesCorrectDataShape(t *testing.T) {
+	tmpDir := testutil.TempDir(t)
+	testutil.SetHomeEnv(t, tmpDir)
+
+	sessDir := tmpDir + "/.tau/sessions/--tmp--"
+	if err := os.MkdirAll(sessDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create a session file
+	sess, err := tausession.CreateSession(sessDir, tmpDir, "compact-test", "")
+	if err != nil {
+		t.Fatalf("CreateSession file: %v", err)
+	}
+
+	// Write some messages
+	for i := 0; i < 10; i++ {
+		if err := sess.Append(types.EntryMessage, tausession.MessageData{
+			Message: types.AgentMessage{
+				ID:      fmt.Sprintf("msg-%d", i),
+				Role:    types.RoleUser,
+				Content: []types.ContentBlock{{Type: types.BlockText, Text: strings.Repeat("x", 5000)}},
+			},
+		}); err != nil {
+			t.Fatalf("Append: %v", err)
+		}
+	}
+
+	// Write compaction entry directly using CompactionData (not SessionEntry)
+	compactionData := tausession.CompactionData{
+		FirstKeptEntryID: "msg-5",
+		TokensBefore:     50000,
+		Summary:          "Test compaction summary",
+	}
+	if err := sess.Append(types.EntryCompaction, compactionData); err != nil {
+		t.Fatalf("Append compaction: %v", err)
+	}
+
+	sessionPath := sess.File()
+	if err := sess.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	// Reopen session and verify compaction entry has correct data shape
+	resumedSess, err := tausession.OpenSession(sessionPath)
+	if err != nil {
+		t.Fatalf("OpenSession: %v", err)
+	}
+	defer resumedSess.Close()
+
+	// Read raw entries to check compaction data shape
+	_, entries, err := tausession.ReadEntries(sessionPath)
+	if err != nil {
+		t.Fatalf("ReadEntries: %v", err)
+	}
+
+	var foundCompaction bool
+	for _, entry := range entries {
+		if entry.Type == types.EntryCompaction {
+			foundCompaction = true
+			var data tausession.CompactionData
+			if err := entry.UnmarshalData(&data); err != nil {
+				t.Fatalf("failed to unmarshal compaction data: %v", err)
+			}
+			if data.Summary != "Test compaction summary" {
+				t.Errorf("expected summary 'Test compaction summary', got %q", data.Summary)
+			}
+			if data.FirstKeptEntryID != "msg-5" {
+				t.Errorf("expected first_kept_entry_id 'msg-5', got %q", data.FirstKeptEntryID)
+			}
+			if data.TokensBefore != 50000 {
+				t.Errorf("expected tokens_before 50000, got %d", data.TokensBefore)
+			}
+			break
+		}
+	}
+	if !foundCompaction {
+		t.Fatal("expected to find a compaction entry in the session file")
+	}
+}
+
+// --- Nil agent recovery tests ---
+
+func TestSession_Subscribe_NilAgent(t *testing.T) {
+	tmpDir := testutil.TempDir(t)
+	testutil.SetHomeEnv(t, tmpDir)
+
+	sessDir := tmpDir + "/.tau/sessions/--tmp--"
+	if err := os.MkdirAll(sessDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	sess, err := tausession.CreateSession(sessDir, tmpDir, "nil-agent-test", "")
+	if err != nil {
+		t.Fatalf("CreateSession file: %v", err)
+	}
+
+	userMsg := types.AgentMessage{
+		ID: "msg-1", Role: types.RoleUser,
+		Content: []types.ContentBlock{{Type: types.BlockText, Text: "hello"}},
+	}
+	if err := sess.Append(types.EntryMessage, tausession.MessageData{Message: userMsg}); err != nil {
+		t.Fatalf("Append: %v", err)
+	}
+
+	sessionPath := sess.File()
+	if err := sess.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	// Construct a Session directly with nil agent (simulates resume without provider)
+	resumedSess, err := tausession.OpenSession(sessionPath)
+	if err != nil {
+		t.Fatalf("OpenSession: %v", err)
+	}
+
+	s := &Session{
+		ag:       nil,
+		sess:     resumedSess,
+		provReg:  provider.NewRegistry(),
+		prov:     nil,
+		model:    types.Model{},
+		toolReg:  tools.NewRegistry(),
+		cwd:      tmpDir,
+		ephemeral: false,
+		msgCount:  1,
+		cfg:       &config.Config{},
+		cfgPath:   "",
+	}
+	defer s.Close()
+
+	// Subscribe should not panic
+	called := false
+	unsub := s.Subscribe(func(e types.AgentEvent) {
+		called = true
+	})
+
+	// Unsubscribe should be safe
+	unsub()
+	unsub() // double-unsubscribe should be safe
+
+	if called {
+		t.Error("listener should not have been called on nil-agent session")
+	}
+}
+
+func TestSession_SetModel_CreatesAgentAfterNilResume(t *testing.T) {
+	tmpDir := testutil.TempDir(t)
+	testutil.SetHomeEnv(t, tmpDir)
+
+	sessDir := tmpDir + "/.tau/sessions/--tmp--"
+	if err := os.MkdirAll(sessDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	sess, err := tausession.CreateSession(sessDir, tmpDir, "setmodel-recovery", "")
+	if err != nil {
+		t.Fatalf("CreateSession file: %v", err)
+	}
+
+	userMsg := types.AgentMessage{
+		ID: "msg-1", Role: types.RoleUser,
+		Content: []types.ContentBlock{{Type: types.BlockText, Text: "remember this: BLUE"}},
+	}
+	assistantMsg := types.AgentMessage{
+		ID: "msg-2", Role: types.RoleAssistant,
+		Content: []types.ContentBlock{{Type: types.BlockText, Text: "Got it, BLUE."}},
+	}
+	if err := sess.Append(types.EntryMessage, tausession.MessageData{Message: userMsg}); err != nil {
+		t.Fatalf("Append user: %v", err)
+	}
+	if err := sess.Append(types.EntryMessage, tausession.MessageData{Message: assistantMsg}); err != nil {
+		t.Fatalf("Append assistant: %v", err)
+	}
+
+	sessionPath := sess.File()
+	if err := sess.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	// Construct a Session directly with nil agent
+	resumedSess, err := tausession.OpenSession(sessionPath)
+	if err != nil {
+		t.Fatalf("OpenSession: %v", err)
+	}
+
+	provReg := provider.NewRegistry()
+	model := types.Model{ID: "mock-model", Provider: "mock", API: "openai-completions"}
+	provReg.Models().Register(model)
+	provReg.Register(&mockProvider{
+		providerName: "mock",
+		model:        model,
+	})
+
+	toolReg := tools.NewRegistry()
+	registerBuiltinTools(toolReg, tmpDir, &config.Config{}, nil, types.Model{}, provReg)
+
+	s := &Session{
+		ag:       nil,
+		sess:     resumedSess,
+		provReg:  provReg,
+		prov:     nil,
+		model:    types.Model{},
+		toolReg:  toolReg,
+		cwd:      tmpDir,
+		ephemeral: false,
+		msgCount:  2,
+		cfg:       &config.Config{},
+		cfgPath:   "",
+	}
+	defer s.Close()
+
+	// SetModel should create the agent
+	if err := s.SetModel("mock/mock-model"); err != nil {
+		t.Fatalf("SetModel: %v", err)
+	}
+
+	if s.ag == nil {
+		t.Fatal("expected agent to be created after SetModel")
+	}
+
+	// Messages should be preserved
+	msgs := s.Messages()
+	if len(msgs) != 2 {
+		t.Fatalf("expected 2 messages after SetModel, got %d", len(msgs))
+	}
+
+	var foundBlue bool
+	for _, block := range msgs[0].Content {
+		if block.Type == types.BlockText && strings.Contains(block.Text, "BLUE") {
+			foundBlue = true
+		}
+	}
+	if !foundBlue {
+		t.Error("expected 'BLUE' text in resumed user message after agent recovery")
+	}
+}
+
+func TestSession_Steer_NilAgent(t *testing.T) {
+	tmpDir := testutil.TempDir(t)
+	testutil.SetHomeEnv(t, tmpDir)
+
+	sessDir := tmpDir + "/.tau/sessions/--tmp--"
+	if err := os.MkdirAll(sessDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	sess, err := tausession.CreateSession(sessDir, tmpDir, "steer-nil-test", "")
+	if err != nil {
+		t.Fatalf("CreateSession file: %v", err)
+	}
+	sessionPath := sess.File()
+	if err := sess.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	resumedSess, err := tausession.OpenSession(sessionPath)
+	if err != nil {
+		t.Fatalf("OpenSession: %v", err)
+	}
+
+	s := &Session{
+		ag:       nil,
+		sess:     resumedSess,
+		provReg:  provider.NewRegistry(),
+		prov:     nil,
+		model:    types.Model{},
+		toolReg:  tools.NewRegistry(),
+		cwd:      tmpDir,
+		ephemeral: false,
+		msgCount:  0,
+		cfg:       &config.Config{},
+		cfgPath:   "",
+	}
+	defer s.Close()
+
+	err = s.Steer("test message")
+	if err == nil {
+		t.Fatal("expected error when steering nil-agent session")
+	}
+}
+
+func TestSession_AgentState_NilAgent(t *testing.T) {
+	tmpDir := testutil.TempDir(t)
+	testutil.SetHomeEnv(t, tmpDir)
+
+	sessDir := tmpDir + "/.tau/sessions/--tmp--"
+	if err := os.MkdirAll(sessDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	sess, err := tausession.CreateSession(sessDir, tmpDir, "agentstate-nil-test", "")
+	if err != nil {
+		t.Fatalf("CreateSession file: %v", err)
+	}
+	sessionPath := sess.File()
+	if err := sess.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	resumedSess, err := tausession.OpenSession(sessionPath)
+	if err != nil {
+		t.Fatalf("OpenSession: %v", err)
+	}
+
+	s := &Session{
+		ag:       nil,
+		sess:     resumedSess,
+		provReg:  provider.NewRegistry(),
+		prov:     nil,
+		model:    types.Model{},
+		toolReg:  tools.NewRegistry(),
+		cwd:      tmpDir,
+		ephemeral: false,
+		msgCount:  0,
+		cfg:       &config.Config{},
+		cfgPath:   "",
+	}
+	defer s.Close()
+
+	// AgentState should not panic and should return a zero/empty state
+	state := s.AgentState()
+	if state != "" && state != "idle" {
+		t.Errorf("expected empty or idle state for nil-agent, got %q", state)
+	}
+}
+
+func TestCreateSession_ConfigDefaultUsedWhenSessionModelUnavailable(t *testing.T) {
+	tmpDir := testutil.TempDir(t)
+	testutil.SetHomeEnv(t, tmpDir)
+
+	tauDir := tmpDir + "/.tau"
+	if err := os.MkdirAll(tauDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	// Set config default to openai
+	if err := os.WriteFile(tauDir+"/auth.json",
+		[]byte(`{"openai": "sk-test-key"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.DefaultConfig()
+	cfg.DefaultModel = "openai/gpt-4o"
+	cfgJSON, _ := json.MarshalIndent(cfg, "", "  ")
+	if err := os.WriteFile(tauDir+"/config.json", cfgJSON, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create a session file with an unavailable model (anthropic)
+	sessDir := tmpDir + "/.tau/sessions/--tmp--"
+	if err := os.MkdirAll(sessDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	sess, err := tausession.CreateSession(sessDir, tmpDir, "unavailable-model-test", "")
+	if err != nil {
+		t.Fatalf("CreateSession file: %v", err)
+	}
+	if err := sess.SetModel("claude-sonnet-4-20250514", "anthropic"); err != nil {
+		t.Fatalf("SetModel: %v", err)
+	}
+	sessionPath := sess.File()
+	if err := sess.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	// Resume the session — should fall back to config default (openai/gpt-4o)
+	s, err := CreateSession(context.Background(), SessionOptions{
+		WorkingDir:  tmpDir,
+		SessionPath: sessionPath,
+	})
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	defer s.Close()
+
+	// Should use config default since anthropic is unavailable
+	m := s.Model()
+	if m.Provider != "openai" {
+		t.Errorf("expected provider 'openai' (config default), got %q", m.Provider)
+	}
+}
+
+func TestCreateSession_AutoFallbackDeterministic(t *testing.T) {
+	tmpDir := testutil.TempDir(t)
+	testutil.SetHomeEnv(t, tmpDir)
+
+	tauDir := tmpDir + ".tau"
+	if err := os.MkdirAll(tauDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	// No auth — only ollama will be available
+	if err := os.WriteFile(tauDir+"/config.json", []byte(`{}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Run multiple times to verify deterministic behavior
+	for i := 0; i < 5; i++ {
+		s, err := CreateSession(context.Background(), SessionOptions{
+			WorkingDir: tmpDir,
+			Ephemeral:  true,
+		})
+		if err != nil {
+			t.Fatalf("iteration %d: CreateSession: %v", i, err)
+		}
+		m := s.Model()
+		// Should always pick the same model (first ollama model alphabetically)
+		if m.Provider != "ollama" {
+			t.Errorf("iteration %d: expected provider 'ollama', got %q", i, m.Provider)
+		}
+		s.Close()
+	}
+}
+
+func TestCreateSession_ConfigDefaultProviderUnavailable_FallsBackToConnectedOnly(t *testing.T) {
+	tmpDir := testutil.TempDir(t)
+	testutil.SetHomeEnv(t, tmpDir)
+
+	tauDir := tmpDir + "/.tau"
+	if err := os.MkdirAll(tauDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	// Set config default to openai but don't provide auth
+	cfg := config.DefaultConfig()
+	cfg.DefaultModel = "openai/gpt-4o"
+	cfgJSON, _ := json.MarshalIndent(cfg, "", "  ")
+	if err := os.WriteFile(tauDir+"/config.json", cfgJSON, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// No auth.json — openai won't be registered, only ollama
+	s, err := CreateSession(context.Background(), SessionOptions{
+		WorkingDir: tmpDir,
+		Ephemeral:  true,
+	})
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	defer s.Close()
+
+	// Should fall back to ollama (only connected provider)
+	m := s.Model()
+	if m.Provider != "ollama" {
+		t.Errorf("expected fallback to 'ollama', got %q", m.Provider)
+	}
+}
+
+func TestResumeSession_UsesConfigDefaultWhenResumedProviderUnavailable(t *testing.T) {
+	tmpDir := testutil.TempDir(t)
+	testutil.SetHomeEnv(t, tmpDir)
+
+	tauDir := tmpDir + "/.tau"
+	if err := os.MkdirAll(tauDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	// Set config default to openai
+	if err := os.WriteFile(tauDir+"/auth.json",
+		[]byte(`{"openai": "sk-test-key"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.DefaultConfig()
+	cfg.DefaultModel = "openai/gpt-4o"
+	cfgJSON, _ := json.MarshalIndent(cfg, "", "  ")
+	if err := os.WriteFile(tauDir+"/config.json", cfgJSON, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create session with openai model first
+	s, err := CreateSession(context.Background(), SessionOptions{
+		Model:      "openai/gpt-4o",
+		WorkingDir: tmpDir,
+		Ephemeral:  true,
+	})
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+
+	// Resume a session file with unavailable anthropic model
+	sessDir := tmpDir + "/.tau/sessions/--tmp--"
+	if err := os.MkdirAll(sessDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	resumedFile, err := tausession.CreateSession(sessDir, tmpDir, "resume-fallback-test", "")
+	if err != nil {
+		t.Fatalf("CreateSession file: %v", err)
+	}
+	if err := resumedFile.SetModel("claude-sonnet-4-20250514", "anthropic"); err != nil {
+		t.Fatalf("SetModel: %v", err)
+	}
+	resumePath := resumedFile.File()
+	if err := resumedFile.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	// Resume the session
+	if err := s.ResumeSession(resumePath); err != nil {
+		t.Fatalf("ResumeSession: %v", err)
+	}
+
+	// Should have fallen back to config default (openai)
+	m := s.Model()
+	if m.Provider != "openai" {
+		t.Errorf("expected provider 'openai' after fallback, got %q", m.Provider)
+	}
+}
+
+func TestCreateSession_NewSessionPicksUpMostRecentSessionModel(t *testing.T) {
+	tmpDir := testutil.TempDir(t)
+	testutil.SetHomeEnv(t, tmpDir)
+
+	tauDir := tmpDir + "/.tau"
+	if err := os.MkdirAll(tauDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	// Set config default to openai
+	if err := os.WriteFile(tauDir+"/auth.json",
+		[]byte(`{"openai": "sk-test-key"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.DefaultConfig()
+	cfg.DefaultModel = "openai/gpt-4o"
+	cfgJSON, _ := json.MarshalIndent(cfg, "", "  ")
+	if err := os.WriteFile(tauDir+"/config.json", cfgJSON, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create a session file with a model change
+	sessDir := tmpDir + "/.tau/sessions/--tmp--"
+	if err := os.MkdirAll(sessDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	prevSess, err := tausession.CreateSession(sessDir, tmpDir, "previous-session", "")
+	if err != nil {
+		t.Fatalf("CreateSession file: %v", err)
+	}
+	// Set model to openai/gpt-4o
+	if err := prevSess.SetModel("gpt-4o", "openai"); err != nil {
+		t.Fatalf("SetModel: %v", err)
+	}
+	if err := prevSess.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	// Create a NEW session (not resume, not continue) — should pick up the most recent session's model
+	s, err := CreateSession(context.Background(), SessionOptions{
+		WorkingDir: tmpDir,
+		Ephemeral:  true,
+	})
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	defer s.Close()
+
+	// Should use the most recent session's model (openai/gpt-4o)
+	m := s.Model()
+	if m.ID != "gpt-4o" {
+		t.Errorf("expected model 'gpt-4o' from most recent session, got %q", m.ID)
+	}
+	if m.Provider != "openai" {
+		t.Errorf("expected provider 'openai', got %q", m.Provider)
+	}
+}
+

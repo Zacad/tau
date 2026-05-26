@@ -19,6 +19,7 @@ type Session struct {
 	usage         types.Usage
 	writer        *JSONLWriter
 	currentModel  string
+	currentProvider string
 	thinkingLevel types.ThinkingLevel
 	// modelThinkingLevels stores the last thinking level set for each model.
 	modelThinkingLevels map[string]types.ThinkingLevel
@@ -85,6 +86,7 @@ func OpenSession(filePath string) (*Session, error) {
 				continue
 			}
 			s.currentModel = data.ModelID
+			s.currentProvider = data.Provider
 
 		case types.EntryThinkingLevelChange:
 			var data ThinkingLevelChangeData
@@ -167,6 +169,7 @@ func (s *Session) appendWithUsage(entryType types.EntryType, data any, usage *ty
 		var d ModelChangeData
 		if err := entry.UnmarshalData(&d); err == nil {
 			s.currentModel = d.ModelID
+			s.currentProvider = d.Provider
 		}
 
 	case types.EntryThinkingLevelChange:
@@ -272,6 +275,13 @@ func (s *Session) CurrentModel() string {
 	return s.currentModel
 }
 
+// CurrentProvider returns the provider currently active in this session.
+func (s *Session) CurrentProvider() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.currentProvider
+}
+
 // CurrentThinkingLevel returns the thinking level currently active.
 func (s *Session) CurrentThinkingLevel() types.ThinkingLevel {
 	s.mu.RLock()
@@ -286,8 +296,8 @@ func (s *Session) SetName(name string) error {
 }
 
 // SetModel updates the current model and persists a model_change entry.
-func (s *Session) SetModel(modelID string) error {
-	data := ModelChangeData{ModelID: modelID}
+func (s *Session) SetModel(modelID, provider string) error {
+	data := ModelChangeData{ModelID: modelID, Provider: provider}
 	return s.Append(types.EntryModelChange, data)
 }
 

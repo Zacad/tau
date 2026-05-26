@@ -4,8 +4,8 @@ import (
 	"strings"
 	"time"
 
-	tea "charm.land/bubbletea/v2"
 	"charm.land/bubbles/v2/spinner"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/adam/tau/internal/tui/palette"
 )
@@ -118,6 +118,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, cmd
 		}
 
+	case tea.PasteMsg:
+		if m.paletteActive {
+			cmd := m.palette.Update(msg)
+			return m, cmd
+		}
+
 	case tea.MouseClickMsg:
 		return m.handleMouseClick(msg)
 
@@ -161,14 +167,23 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	wasBrowsing := m.promptHistoryIndex != -1
 	oldValue := m.input.Value()
 
-	m.viewport, cmd = m.viewport.Update(msg)
-	if cmd != nil {
-		return m, cmd
-	}
-
-	// Mouse wheel events should only scroll the viewport, not the textarea.
-	// Per requirements, prompt input scrolling is via arrow keys only.
-	if _, isWheel := msg.(tea.MouseWheelMsg); !isWheel {
+	// Focus-gated routing: keyboard events go to the focused component only.
+	// Mouse wheel always goes to viewport regardless of keyboard focus.
+	if m.input.Focused() {
+		if _, isWheel := msg.(tea.MouseWheelMsg); !isWheel {
+			// Keyboard focus is on prompt input — route keys to textarea only.
+			m.input, cmd = m.input.Update(msg)
+		} else {
+			// Mouse wheel — route to viewport only.
+			m.viewport, cmd = m.viewport.Update(msg)
+		}
+	} else {
+		// Viewport has keyboard focus — route keyboard events to viewport.
+		m.viewport, cmd = m.viewport.Update(msg)
+		if cmd != nil {
+			return m, cmd
+		}
+		// Mouse wheel also goes to viewport.
 		m.input, cmd = m.input.Update(msg)
 	}
 
@@ -183,7 +198,6 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.lastInputHeight = h
 		m.resize(m.width, m.height)
 	}
-	m.viewport, _ = m.viewport.Update(msg)
 	return m, cmd
 }
 
@@ -363,26 +377,26 @@ func (m *Model) handleKeyPress(msg tea.KeyPressMsg) tea.Cmd {
 		m.input.SetCursorColumn(0)
 		m.promptHistoryIndex = -1
 
-	// Add to history before submitting
-	_ = appendPromptHistory(m.cwd, val)
+		// Add to history before submitting
+		_ = appendPromptHistory(m.cwd, val)
 
-	if m.state == stateIdle {
-		if handled, cmd := m.executeCommand(val); handled {
-			if cmd == nil {
-				return func() tea.Msg { return nil }
+		if m.state == stateIdle {
+			if handled, cmd := m.executeCommand(val); handled {
+				if cmd == nil {
+					return func() tea.Msg { return nil }
+				}
+				return cmd
 			}
-			return cmd
+			return m.submitPrompt(val)
 		}
-		return m.submitPrompt(val)
-	}
 
-	if m.state == stateStreaming {
-		if handled, cmd := m.executeCommandStreaming(val); handled {
-			if cmd == nil {
-				return func() tea.Msg { return nil }
+		if m.state == stateStreaming {
+			if handled, cmd := m.executeCommandStreaming(val); handled {
+				if cmd == nil {
+					return func() tea.Msg { return nil }
+				}
+				return cmd
 			}
-			return cmd
-		}
 			m.session.EnqueueMessage(val)
 			m.blocks = append(m.blocks, messageBlock{
 				kind: blockQueuedMessage,
@@ -578,7 +592,7 @@ func (m *Model) openPalette() {
 	var cmds []Command
 	for i := range m.commandRegistry.commands {
 		c := &m.commandRegistry.commands[i]
-		if c.Type() == appCommand || c.Type() == appMultiStepCommand {
+		if c.Type() == appCommand || c.Type() == appMultiStepCommand || c.Type() == chatCommand {
 			cmds = append(cmds, *c)
 		}
 	}
@@ -586,7 +600,7 @@ func (m *Model) openPalette() {
 	avail := make(map[string]bool)
 	for i := range m.commandRegistry.commands {
 		c := &m.commandRegistry.commands[i]
-		if c.Type() == appCommand || c.Type() == appMultiStepCommand {
+		if c.Type() == appCommand || c.Type() == appMultiStepCommand || c.Type() == chatCommand {
 			avail[c.Name()] = c.IsAvailable(m)
 		}
 	}
@@ -649,6 +663,12 @@ func (m *Model) executePaletteSelection() tea.Cmd {
 		return m.palette.ShowSteps(steps, cmd.Name())
 	}
 
+	if cmd.Type() == chatCommand {
+		m.palette.ShowInput(cmd.Name(), cmd.Description())
+		m.paletteActive = true
+		return nil
+	}
+
 	m.palette.Close()
 	m.paletteActive = false
 	m.input.SetValue("")
@@ -664,6 +684,22 @@ func (m *Model) executePaletteSelection() tea.Cmd {
 
 func (m *Model) executePaletteInputResult() tea.Cmd {
 	result := m.palette.InputResult()
+
+	// Check if this is a chat command input (no custom selection handler)
+	if handler := m.palette.SelectionHandler(); handler == nil {
+		// Chat command: find the selected command and execute with args
+		cmd := m.palette.Selected()
+		if cmd != nil && cmd.Type() == chatCommand {
+			m.palette.Close()
+			m.paletteActive = false
+			m.input.SetValue("")
+			m.input.Focus()
+			if h := cmd.Handler(); h != nil {
+				return h(m, result)
+			}
+			return func() tea.Msg { return nil }
+		}
+	}
 
 	if handler := m.palette.SelectionHandler(); handler != nil {
 		if m.paletteConfirmPrompt != "" {

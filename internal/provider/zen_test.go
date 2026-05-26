@@ -475,9 +475,9 @@ func TestOpenAIProvider_Thinking(t *testing.T) {
 func TestOpenAIProvider_ToolCalls(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
-		fmt.Fprint(w, "event: response.output_item.added\ndata: {\"type\": \"function_call\", \"id\": \"call_123\", \"name\": \"get_weather\"}\n\n")
+		fmt.Fprint(w, "event: response.output_item.added\ndata: {\"item\": {\"type\": \"function_call\", \"id\": \"fc_call123\", \"name\": \"get_weather\", \"call_id\": \"call_123\"}}\n\n")
 		fmt.Fprint(w, "event: response.function_call_arguments.delta\ndata: {\"delta\": \"{\\\"location\\\": \\\"Warsaw\\\"}\"}\n\n")
-		fmt.Fprint(w, "event: response.function_call_arguments.done\ndata: {}\n\n")
+		fmt.Fprint(w, "event: response.function_call_arguments.done\ndata: {\"arguments\": \"{\\\"location\\\": \\\"Warsaw\\\"}\"}\n\n")
 		fmt.Fprint(w, "event: response.completed\ndata: {\"usage\": {\"input_tokens\": 10, \"output_tokens\": 5, \"total_tokens\": 15}}\n\n")
 	}))
 	defer server.Close()
@@ -514,9 +514,9 @@ func TestOpenAIProvider_CollectWithThinkingAndTools(t *testing.T) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		fmt.Fprint(w, "event: response.reasoning_summary_text.delta\ndata: {\"delta\": \"thinking\"}\n\n")
 		fmt.Fprint(w, "event: response.output_text.delta\ndata: {\"delta\": \"answer\"}\n\n")
-		fmt.Fprint(w, "event: response.output_item.added\ndata: {\"type\": \"function_call\", \"id\": \"call_1\", \"name\": \"tool1\"}\n\n")
+		fmt.Fprint(w, "event: response.output_item.added\ndata: {\"item\": {\"type\": \"function_call\", \"id\": \"fc_call1\", \"name\": \"tool1\", \"call_id\": \"call_1\"}}\n\n")
 		fmt.Fprint(w, "event: response.function_call_arguments.delta\ndata: {\"delta\": \"{\\\"a\\\": 1}\"}\n\n")
-		fmt.Fprint(w, "event: response.function_call_arguments.done\ndata: {}\n\n")
+		fmt.Fprint(w, "event: response.function_call_arguments.done\ndata: {\"arguments\": \"{\\\"a\\\": 1}\"}\n\n")
 		fmt.Fprint(w, "event: response.completed\ndata: {\"usage\": {\"input_tokens\": 5, \"output_tokens\": 5, \"total_tokens\": 10}}\n\n")
 	}))
 	defer server.Close()

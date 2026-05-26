@@ -325,6 +325,16 @@ func (sa *SubAgent) Run(ctx context.Context) SubAgentResult {
 			resultMsg := buildToolResultMessage(call, r)
 			messages = append(messages, resultMsg)
 
+			sa.emitEvent(types.AgentEvent{
+				Type: types.AgentEventToolResult,
+				Data: types.ToolResultEvent{
+					CallID:   call.ID,
+					ToolName: call.Name,
+					IsError:  r != nil && r.Result != nil && r.Result.IsError,
+					Content:  toolResultText(r),
+				},
+			})
+
 			if artifact := extractArtifact(call, r); artifact != "" {
 				artifacts = append(artifacts, artifact)
 			}
@@ -383,27 +393,27 @@ func (sa *SubAgent) Run(ctx context.Context) SubAgentResult {
 
 // SubAgentStep defines a single step in a chain execution.
 type SubAgentStep struct {
-	Task         string
-	Type         Type
-	SystemPrompt string
-	Model        types.Model
-	Timeout      time.Duration
-	ContextMode  ContextMode
+	Task           string
+	Type           Type
+	SystemPrompt   string
+	Model          types.Model
+	Timeout        time.Duration
+	ContextMode    ContextMode
 	ParentMessages []types.AgentMessage
-	Tools        []Tool
-	Executor     Executor
-	Events       chan types.AgentEvent
+	Tools          []Tool
+	Executor       Executor
+	Events         chan types.AgentEvent
 }
 
 // ChainResult holds the outcome of a chain execution.
 type ChainResult struct {
-	Output            string
-	Error             error
-	Duration          time.Duration
-	TotalUsage        types.Usage
-	Steps             []SubAgentResult
-	CompletedSteps    int
-	FailedStep        int // -1 if all succeeded
+	Output         string
+	Error          error
+	Duration       time.Duration
+	TotalUsage     types.Usage
+	Steps          []SubAgentResult
+	CompletedSteps int
+	FailedStep     int // -1 if all succeeded
 }
 
 // RunChain executes steps sequentially, passing the output of each step
@@ -423,17 +433,17 @@ func RunChain(ctx context.Context, provider provider.Provider, steps []SubAgentS
 		task := strings.ReplaceAll(step.Task, "{previous}", previousOutput)
 
 		sa := NewSubAgent(provider, SubAgentOpts{
-			Type:           step.Type,
-			Task:           task,
-			SystemPrompt:   step.SystemPrompt,
-			Model:          step.Model,
-			Timeout:        step.Timeout,
-			ContextMode:    step.ContextMode,
-			ParentMessages: step.ParentMessages,
-			Tools:          step.Tools,
+			Type:            step.Type,
+			Task:            task,
+			SystemPrompt:    step.SystemPrompt,
+			Model:           step.Model,
+			Timeout:         step.Timeout,
+			ContextMode:     step.ContextMode,
+			ParentMessages:  step.ParentMessages,
+			Tools:           step.Tools,
 			ParentToolNames: parentToolNames,
-			Executor:       step.Executor,
-			Events:         step.Events,
+			Executor:        step.Executor,
+			Events:          step.Events,
 		})
 
 		result := sa.Run(ctx)
@@ -617,11 +627,40 @@ func (sa *SubAgent) convertStreamEvent(event types.StreamEvent) types.AgentEvent
 		ae.Type = types.AgentEventMessageEnd
 	case types.EventToolCallStart:
 		ae.Type = types.AgentEventToolExecStart
-		ae.Data = event.Delta
+		ae.Data = types.ToolLifecycleEvent{
+			ToolName:     event.Delta,
+			Phase:        types.ToolLifecycleRequested,
+			Source:       types.ToolLifecycleSourceNative,
+			ArgsSummary:  types.SummarizeToolArgs(event.Delta, nil),
+			ArgsComplete: false,
+		}
 	case types.EventToolCallEnd:
 		ae.Type = types.AgentEventToolExecEnd
+		var payload *types.ToolLifecycleEvent
 		if event.Message != nil {
-			ae.Data = event.Message
+			for _, block := range event.Message.Content {
+				if block.Type == types.BlockToolCall && block.ToolCall != nil {
+					argsJSON, _ := json.Marshal(block.ToolCall.Arguments)
+					payload = &types.ToolLifecycleEvent{
+						CallID:       block.ToolCall.ID,
+						ToolName:     block.ToolCall.Name,
+						Phase:        types.ToolLifecycleFinalized,
+						Source:       types.ToolLifecycleSourceNative,
+						ArgsJSON:     argsJSON,
+						ArgsSummary:  types.SummarizeToolArgs(block.ToolCall.Name, block.ToolCall.Arguments),
+						ArgsComplete: true,
+					}
+					break
+				}
+			}
+		}
+		if payload == nil {
+			// Native end without a stable ID is not canonical finalized metadata.
+			// consumeStream will emit an inferred finalized event from EventDone.
+			ae.Type = types.AgentEventToolProgress
+			ae.Data = types.ToolProgressEvent{ToolName: event.Delta}
+		} else {
+			ae.Data = *payload
 		}
 	case types.EventDone:
 		ae.Type = types.AgentEventMessageEnd
@@ -653,9 +692,17 @@ func (sa *SubAgent) emitEvent(event types.AgentEvent) {
 // consumeStream processes a stream of events, accumulating text and extracting tool calls.
 // Returns the tool calls found (nil if stream errored or was cancelled).
 func (sa *SubAgent) consumeStream(ctx context.Context, events <-chan types.StreamEvent, internalEvents chan<- types.StreamEvent, result *SubAgentResult, textAccum *string, lastMsg **types.AgentMessage, start time.Time) []ToolCallRequest {
+	nativeFinalizedToolCalls := make(map[string]bool)
 	for event := range events {
 		// Forward to internal channel for the goroutine forwarder
 		internalEvents <- event
+		if event.Type == types.EventToolCallEnd && event.Message != nil {
+			for _, block := range event.Message.Content {
+				if block.Type == types.BlockToolCall && block.ToolCall != nil && block.ToolCall.ID != "" {
+					nativeFinalizedToolCalls[block.ToolCall.ID] = true
+				}
+			}
+		}
 
 		switch event.Type {
 		case types.EventTextDelta:
@@ -697,6 +744,23 @@ func (sa *SubAgent) consumeStream(ctx context.Context, events <-chan types.Strea
 	}
 
 	toolCalls := extractToolCalls(*lastMsg)
+	for _, call := range toolCalls {
+		if nativeFinalizedToolCalls[call.ID] {
+			continue
+		}
+		sa.emitEvent(types.AgentEvent{
+			Type: types.AgentEventToolExecEnd,
+			Data: types.ToolLifecycleEvent{
+				CallID:       call.ID,
+				ToolName:     call.Name,
+				Phase:        types.ToolLifecycleFinalized,
+				Source:       types.ToolLifecycleSourceInferred,
+				ArgsJSON:     append([]byte(nil), call.Arguments...),
+				ArgsSummary:  types.SummarizeToolArgsJSON(call.Name, call.Arguments),
+				ArgsComplete: true,
+			},
+		})
+	}
 	return toolCalls
 }
 

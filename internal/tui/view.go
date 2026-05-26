@@ -121,6 +121,26 @@ func (m *Model) renderFooter() string {
 	parts = append(parts, m.cwd)
 	parts = append(parts, fmt.Sprintf("turns:%d", m.turnCount))
 
+	// Context usage display (matches PI footer style)
+	if m.contextWindow > 0 && m.contextKnown {
+		var ctxStr string
+		if m.contextTokens == 0 && m.turnCount == 0 {
+			ctxStr = fmt.Sprintf("ctx:0%%/%s", formatTokens(m.contextWindow))
+		} else {
+			pct := float64(m.contextTokens) / float64(m.contextWindow) * 100
+			pctStr := fmt.Sprintf("%.1f%%", pct)
+			ctxDisplay := fmt.Sprintf("ctx:%s/%s", pctStr, formatTokens(m.contextWindow))
+			if pct > 90 {
+				ctxStr = contextErrorStyle.Render(ctxDisplay)
+			} else if pct > 70 {
+				ctxStr = contextWarningStyle.Render(ctxDisplay)
+			} else {
+				ctxStr = ctxDisplay
+			}
+		}
+		parts = append(parts, ctxStr)
+	}
+
 	if m.usage.TotalTokens > 0 {
 		parts = append(parts, fmt.Sprintf("tokens:%d", m.usage.TotalTokens))
 		if m.usage.Cost.Total > 0 {

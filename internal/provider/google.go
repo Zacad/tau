@@ -156,17 +156,17 @@ func (p *GoogleProvider) buildRequest(model types.Model, messages []types.AgentM
 				Name:        t.Name,
 				Description: t.Description,
 			}
-		if t.Parameters != nil {
-			raw, err := json.Marshal(t.Parameters)
-			if err != nil {
-				return nil, fmt.Errorf("marshaling tool parameters: %w", err)
+			if t.Parameters != nil {
+				raw, err := json.Marshal(t.Parameters)
+				if err != nil {
+					return nil, fmt.Errorf("marshaling tool parameters: %w", err)
+				}
+				var schemaMap map[string]any
+				if err := json.Unmarshal(raw, &schemaMap); err != nil {
+					return nil, fmt.Errorf("unmarshaling tool parameters: %w", err)
+				}
+				decl.Parameters = sanitizeGoogleSchema(schemaMap)
 			}
-			var schemaMap map[string]any
-			if err := json.Unmarshal(raw, &schemaMap); err != nil {
-				return nil, fmt.Errorf("unmarshaling tool parameters: %w", err)
-			}
-			decl.Parameters = sanitizeGoogleSchema(schemaMap)
-		}
 			req.Tools = append(req.Tools, googleTool{
 				FunctionDeclarations: []googleFunctionDeclaration{decl},
 			})
@@ -183,11 +183,11 @@ func (p *GoogleProvider) buildRequest(model types.Model, messages []types.AgentM
 	if opts.ThinkingLevel != "" && opts.ThinkingLevel != types.ThinkingOff {
 		// Use model's thinking level map for provider-specific values
 		mapped := model.MapThinkingLevel(opts.ThinkingLevel)
-		
+
 		// Check if it's a numeric budget (Gemini 2.x) or a level (Gemini 3/Gemma)
 		if isGoogleThinkingLevel(mapped) {
 			req.GenerationConfig.ThinkingConfig = &googleThinkingConfig{
-				ThinkingLevel:  mapped,
+				ThinkingLevel:   mapped,
 				IncludeThoughts: true,
 			}
 		} else {
@@ -243,58 +243,64 @@ func (p *GoogleProvider) parseStreamResponse(ctx context.Context, body []byte, m
 				continue
 			}
 
-		candidate := resp.Candidates[0]
+			candidate := resp.Candidates[0]
 
-		// Process content (Gemini sends text and finishReason in the same event)
-		if candidate.Content != nil {
-			for _, part := range candidate.Content.Parts {
-				if part.Text != "" {
-					msg.Content = append(msg.Content, types.ContentBlock{
-						Type: types.BlockText,
-						Text: part.Text,
-					})
-					sendEvent(ctx, ch, types.StreamEvent{
-						Type:    types.EventTextDelta,
-						Delta:   part.Text,
-						Message: msg,
-					})
-				}
-				if part.FunctionCall != nil {
-					args := make(map[string]any)
-					if part.FunctionCall.Args != nil {
-						args = part.FunctionCall.Args
+			// Process content (Gemini sends text and finishReason in the same event)
+			if candidate.Content != nil {
+				for _, part := range candidate.Content.Parts {
+					if part.Text != "" {
+						msg.Content = append(msg.Content, types.ContentBlock{
+							Type: types.BlockText,
+							Text: part.Text,
+						})
+						sendEvent(ctx, ch, types.StreamEvent{
+							Type:    types.EventTextDelta,
+							Delta:   part.Text,
+							Message: msg,
+						})
 					}
-					msg.Content = append(msg.Content, types.ContentBlock{
-						Type: types.BlockToolCall,
-						ToolCall: &types.ToolCallBlock{
+					if part.FunctionCall != nil {
+						args := make(map[string]any)
+						if part.FunctionCall.Args != nil {
+							args = part.FunctionCall.Args
+						}
+						toolCall := &types.ToolCallBlock{
 							ID:        part.FunctionCall.Name,
 							Name:      part.FunctionCall.Name,
 							Arguments: args,
-						},
-					})
-					sendEvent(ctx, ch, types.StreamEvent{
-						Type:  types.EventToolCallStart,
-						Delta: part.FunctionCall.Name,
-					})
+						}
+						msg.Content = append(msg.Content, types.ContentBlock{
+							Type:     types.BlockToolCall,
+							ToolCall: toolCall,
+						})
+						sendEvent(ctx, ch, types.StreamEvent{
+							Type:  types.EventToolCallStart,
+							Delta: part.FunctionCall.Name,
+						})
+						sendEvent(ctx, ch, types.StreamEvent{
+							Type:    types.EventToolCallEnd,
+							Delta:   part.FunctionCall.Name,
+							Message: msg,
+						})
+					}
 				}
 			}
-		}
 
-		// Check for finish reason
-		if candidate.FinishReason != "" {
-			usage := types.Usage{}
-			if resp.UsageMetadata != nil {
-				usage.Input = resp.UsageMetadata.PromptTokenCount
-				usage.Output = resp.UsageMetadata.CandidatesTokenCount
-				usage.TotalTokens = resp.UsageMetadata.TotalTokenCount
+			// Check for finish reason
+			if candidate.FinishReason != "" {
+				usage := types.Usage{}
+				if resp.UsageMetadata != nil {
+					usage.Input = resp.UsageMetadata.PromptTokenCount
+					usage.Output = resp.UsageMetadata.CandidatesTokenCount
+					usage.TotalTokens = resp.UsageMetadata.TotalTokenCount
+				}
+				sendEvent(ctx, ch, types.StreamEvent{
+					Type:    types.EventDone,
+					Message: msg,
+					Usage:   &usage,
+				})
+				continue
 			}
-			sendEvent(ctx, ch, types.StreamEvent{
-				Type:    types.EventDone,
-				Message: msg,
-				Usage:   &usage,
-			})
-			continue
-		}
 		}
 	}()
 
@@ -329,15 +335,15 @@ func (p *GoogleProvider) collectFromStream(ch <-chan types.StreamEvent) (*types.
 // Google request/response types
 
 type googleRequest struct {
-	Contents           []googleContentMsg          `json:"contents,omitempty"`
-	SystemInstruction  *googleSystemInstruction    `json:"systemInstruction,omitempty"`
-	Tools              []googleTool                `json:"tools,omitempty"`
-	GenerationConfig   *googleGenerationConfig     `json:"generationConfig,omitempty"`
+	Contents          []googleContentMsg       `json:"contents,omitempty"`
+	SystemInstruction *googleSystemInstruction `json:"systemInstruction,omitempty"`
+	Tools             []googleTool             `json:"tools,omitempty"`
+	GenerationConfig  *googleGenerationConfig  `json:"generationConfig,omitempty"`
 }
 
 type googleContentMsg struct {
-	Role  string        `json:"role"`
-	Parts []googlePart  `json:"parts"`
+	Role  string       `json:"role"`
+	Parts []googlePart `json:"parts"`
 }
 
 type googlePart struct {
@@ -365,19 +371,19 @@ type googleFunctionDeclaration struct {
 }
 
 type googleGenerationConfig struct {
-	Temperature     float64 `json:"temperature,omitempty"`
-	MaxOutputTokens int     `json:"maxOutputTokens,omitempty"`
+	Temperature     float64               `json:"temperature,omitempty"`
+	MaxOutputTokens int                   `json:"maxOutputTokens,omitempty"`
 	ThinkingConfig  *googleThinkingConfig `json:"thinkingConfig,omitempty"`
 }
 
 type googleThinkingConfig struct {
-	ThinkingBudget int    `json:"thinkingBudget,omitempty"`
-	ThinkingLevel  string `json:"thinkingLevel,omitempty"`
-	IncludeThoughts bool  `json:"includeThoughts,omitempty"`
+	ThinkingBudget  int    `json:"thinkingBudget,omitempty"`
+	ThinkingLevel   string `json:"thinkingLevel,omitempty"`
+	IncludeThoughts bool   `json:"includeThoughts,omitempty"`
 }
 
 type googleStreamResponse struct {
-	Candidates    []googleCandidate   `json:"candidates"`
+	Candidates    []googleCandidate    `json:"candidates"`
 	UsageMetadata *googleUsageMetadata `json:"usageMetadata,omitempty"`
 }
 

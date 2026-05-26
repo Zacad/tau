@@ -212,21 +212,13 @@ func TestOpenAIProvider_IncludeField_WithOpenAIBaseURL(t *testing.T) {
 		t.Fatalf("failed to unmarshal body: %v", err)
 	}
 
-	// Official OpenAI should have session_usage in include
-	include, ok := req["include"].([]any)
-	if !ok {
-		t.Fatal("expected include field for official OpenAI")
-	}
-
-	found := false
-	for _, item := range include {
-		if item == "session_usage" {
-			found = true
-			break
+	// session_usage is not a valid value for OpenAI Responses API include field
+	if include, ok := req["include"].([]any); ok {
+		for _, item := range include {
+			if item == "session_usage" {
+				t.Error("session_usage should never be included — not supported by OpenAI Responses API")
+			}
 		}
-	}
-	if !found {
-		t.Error("expected session_usage to be included for official OpenAI")
 	}
 }
 
@@ -250,21 +242,13 @@ func TestOpenAIProvider_IncludeField_WithEmptyBaseURL(t *testing.T) {
 		t.Fatalf("failed to unmarshal body: %v", err)
 	}
 
-	// Empty BaseURL (defaults to official OpenAI) should have session_usage
-	include, ok := req["include"].([]any)
-	if !ok {
-		t.Fatal("expected include field for empty BaseURL")
-	}
-
-	found := false
-	for _, item := range include {
-		if item == "session_usage" {
-			found = true
-			break
+	// session_usage is not a valid value for OpenAI Responses API include field
+	if include, ok := req["include"].([]any); ok {
+		for _, item := range include {
+			if item == "session_usage" {
+				t.Error("session_usage should never be included — not supported by OpenAI Responses API")
+			}
 		}
-	}
-	if !found {
-		t.Error("expected session_usage to be included for empty BaseURL")
 	}
 }
 

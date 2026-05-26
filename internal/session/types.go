@@ -14,7 +14,8 @@ type MessageData struct {
 
 // ModelChangeData records a model switch event.
 type ModelChangeData struct {
-	ModelID string `json:"model_id"`
+	ModelID  string `json:"model_id"`
+	Provider string `json:"provider,omitempty"`
 }
 
 // ThinkingLevelChangeData records a thinking level adjustment.

@@ -339,6 +339,14 @@ func (p *CommandPalette) OpenWithItems(items []palette.PaletteItem, avail []bool
 	p.list.Init(items, avail)
 }
 
+func (p *CommandPalette) OpenWithGroupedItems(items []palette.PaletteItem, avail []bool, handler func(item palette.PaletteItem, index int) tea.Cmd) {
+	p.active = true
+	p.commands = nil
+	p.available = avail
+	p.selectionHandler = handler
+	p.list.InitGrouped(items, avail)
+}
+
 func (p *CommandPalette) SelectionHandler() func(item palette.PaletteItem, index int) tea.Cmd {
 	return p.selectionHandler
 }

@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/adam/tau/internal/config"
 	"github.com/adam/tau/internal/testutil"
@@ -177,5 +178,113 @@ func TestComputeSkillsDirs_ProjectAndGlobal(t *testing.T) {
 	// First should be project skills dir
 	if paths.SkillsDirs[0] != skillsDir {
 		t.Errorf("SkillsDirs[0]: got %q, want %q", paths.SkillsDirs[0], skillsDir)
+	}
+}
+
+func TestLatestSessionFile_ReturnsMostRecent(t *testing.T) {
+	dir := testutil.TempDir(t)
+
+	// Create two session files with different modification times
+	file1 := filepath.Join(dir, "20260101T120000_abc.jsonl")
+	file2 := filepath.Join(dir, "20260101T130000_def.jsonl")
+	if err := os.WriteFile(file1, []byte("old"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(file2, []byte("new"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Make file2 more recently modified than file1
+	oldTime := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	newTime := time.Date(2026, 1, 1, 13, 0, 0, 0, time.UTC)
+	if err := os.Chtimes(file1, oldTime, oldTime); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(file2, newTime, newTime); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := config.LatestSessionFile(dir)
+	if err != nil {
+		t.Fatalf("LatestSessionFile: %v", err)
+	}
+	if got != file2 {
+		t.Errorf("got %q, want %q", got, file2)
+	}
+}
+
+func TestLatestSessionFile_SameMtime_UsesFilename(t *testing.T) {
+	dir := testutil.TempDir(t)
+
+	file1 := filepath.Join(dir, "20260101T120000_abc.jsonl")
+	file2 := filepath.Join(dir, "20260101T130000_def.jsonl")
+	if err := os.WriteFile(file1, []byte("a"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(file2, []byte("b"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Set identical modification times
+	sameTime := time.Date(2026, 1, 1, 12, 30, 0, 0, time.UTC)
+	if err := os.Chtimes(file1, sameTime, sameTime); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(file2, sameTime, sameTime); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := config.LatestSessionFile(dir)
+	if err != nil {
+		t.Fatalf("LatestSessionFile: %v", err)
+	}
+	// When mtime is equal, filename is the tie-breaker (lexicographic)
+	if got != file2 {
+		t.Errorf("got %q, want %q", got, file2)
+	}
+}
+
+func TestLatestSessionFile_OlderFileModifiedLater(t *testing.T) {
+	dir := testutil.TempDir(t)
+
+	// file1 has an older creation timestamp but will be modified later
+	file1 := filepath.Join(dir, "20260101T120000_abc.jsonl")
+	file2 := filepath.Join(dir, "20260101T130000_def.jsonl")
+	if err := os.WriteFile(file1, []byte("a"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(file2, []byte("b"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// file1 created first with old mtime, file2 created with middle mtime
+	midTime := time.Date(2026, 1, 1, 13, 0, 0, 0, time.UTC)
+	newTime := time.Date(2026, 1, 1, 14, 0, 0, 0, time.UTC)
+	if err := os.Chtimes(file2, midTime, midTime); err != nil {
+		t.Fatal(err)
+	}
+	// Make file1 newest by setting its mtime after file2
+	if err := os.Chtimes(file1, newTime, newTime); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := config.LatestSessionFile(dir)
+	if err != nil {
+		t.Fatalf("LatestSessionFile: %v", err)
+	}
+	if got != file1 {
+		t.Errorf("got %q, want %q (older creation but newer mtime)", got, file1)
+	}
+}
+
+func TestLatestSessionFile_NoFiles(t *testing.T) {
+	dir := testutil.TempDir(t)
+
+	got, err := config.LatestSessionFile(dir)
+	if err != nil {
+		t.Fatalf("LatestSessionFile: %v", err)
+	}
+	if got != "" {
+		t.Errorf("got %q, want empty string", got)
 	}
 }

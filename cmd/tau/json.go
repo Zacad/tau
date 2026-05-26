@@ -12,11 +12,24 @@ import (
 
 // jsonEvent is a single line of JSONL output.
 type jsonEvent struct {
-	Type      string         `json:"type"`
-	Data      string         `json:"data,omitempty"`
-	SessionID string         `json:"session_id"`
-	Timestamp string         `json:"timestamp"`
-	Usage     *types.Usage   `json:"usage,omitempty"`
+	Type      string       `json:"type"`
+	Data      string       `json:"data,omitempty"`
+	SessionID string       `json:"session_id"`
+	Timestamp string       `json:"timestamp"`
+	Usage     *types.Usage `json:"usage,omitempty"`
+}
+
+func newJSONEvent(event types.AgentEvent, sessionID string) jsonEvent {
+	je := jsonEvent{
+		Type:      string(event.Type),
+		SessionID: sessionID,
+	}
+	if event.Data != nil {
+		if b, err := json.Marshal(event.Data); err == nil {
+			je.Data = string(b)
+		}
+	}
+	return je
 }
 
 // runJSON executes a single prompt and outputs JSONL events to stdout.
@@ -48,17 +61,7 @@ func runJSON(cfg cliConfig) {
 	enc := json.NewEncoder(os.Stdout)
 
 	unsub := session.Subscribe(func(event types.AgentEvent) {
-		je := jsonEvent{
-			Type:      string(event.Type),
-			SessionID: sessionID,
-		}
-
-		// Serialize event-specific data as a JSON string
-		if event.Data != nil {
-			if b, err := json.Marshal(event.Data); err == nil {
-				je.Data = string(b)
-			}
-		}
+		je := newJSONEvent(event, sessionID)
 
 		// Write JSONL line
 		if err := enc.Encode(je); err != nil {

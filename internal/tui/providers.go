@@ -73,6 +73,15 @@ var providerCatalog = []ProviderInfo{
 		DiscoverModels: discoverOpenAICompatModelsOpenAI,
 	},
 	{
+		Name:           "openai-oauth",
+		DisplayName:    "ChatGPT Plus/Pro (OAuth)",
+		Description:    "Use your ChatGPT subscription (no API key required)",
+		RequiresAPIKey: false,
+		BaseURL:        "https://chatgpt.com/backend-api",
+		TestConnection: testOpenAIOAuth,
+		DiscoverModels: discoverOpenAIOAuthModels,
+	},
+	{
 		Name:           "anthropic",
 		DisplayName:    "Anthropic",
 		Description:    "Anthropic Claude models",
@@ -150,9 +159,9 @@ func getProviderState(providerName string) providerState {
 	hasAuth := false
 	apiKey := ""
 	if err == nil {
-		if key, exists := store[providerName]; exists {
+		if authVal, exists := store[providerName]; exists {
 			hasAuth = true
-			apiKey = key
+			apiKey = authVal.APIKey()
 		}
 	}
 
@@ -538,6 +547,31 @@ func discoverOpenRouterModels(apiKey string) ([]string, error) {
 	}
 
 	return models, nil
+}
+
+// testOpenAIOAuth tests connectivity for OAuth provider.
+// Since OAuth requires valid tokens, we just verify the endpoint is reachable.
+func testOpenAIOAuth(apiKey string) error {
+	// OAuth connectivity is verified during the OAuth flow itself.
+	// This function is a no-op — actual connection test happens when tokens are obtained.
+	if apiKey != "" {
+		// If somehow an API key was passed, this isn't an OAuth provider
+		return fmt.Errorf("OAuth provider does not use API keys")
+	}
+	return nil
+}
+
+// discoverOpenAIOAuthModels returns the hardcoded Codex model list.
+// The Codex endpoint does not have a model listing API.
+func discoverOpenAIOAuthModels(apiKey string) ([]string, error) {
+	return []string{
+		"gpt-5.5",
+		"gpt-5.4",
+		"gpt-5.4-mini",
+		"gpt-5.3-codex",
+		"gpt-5.3-codex-spark",
+		"gpt-5.2",
+	}, nil
 }
 
 // testProviderConnection tests connectivity for a specific provider.

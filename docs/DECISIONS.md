@@ -2,6 +2,108 @@
 
 <!-- Architectural and design decisions log -->
 
+## 2026-05-25 — Canonical Tool Lifecycle Contract Normalizes Provider Tool Metadata
+
+- **Decision**: Tau will introduce a canonical typed tool lifecycle contract at the agent boundary, including stable tool call IDs, explicit lifecycle semantics, and native-vs-inferred completion metadata. TUI tool-call rendering will consume this canonical data instead of provider-leaking ad hoc maps.
+- **Rationale**: Tau already has compact tool argument formatting for many tools, but provider lifecycle inconsistencies prevent those summaries from reaching the TUI reliably. OpenAI and Ollama provide richer tool-call completion data, while Anthropic and Google currently do not. Canonical agent-layer normalization avoids provider-specific TUI logic, enables correct correlation for repeated/concurrent same-tool calls, and creates a safe place to centralize sanitization and truncation.
+- **Alternatives considered**: Keep current `map[string]any` event payloads and patch individual TUI cases (rejected: preserves weak semantics and provider leakage), Fix only provider end events without typed payloads (rejected: improves happy path but keeps lifecycle ambiguity and compatibility risk), Move normalization into TUI (rejected: wrong layer, increases UI complexity and provider coupling).
+- **Context**: Task 064 — user requested tool calls in the chat window to show actionable metadata such as file paths, commands, and URLs instead of only bare tool names or placeholders.
+
+## 2026-05-25 — Interrupted Tool Calls Get Synthetic Tool Results
+
+- **Decision**: If the agent is interrupted while executing tool calls, it appends a synthetic error `tool_result` message for each in-flight tool call before returning the cancellation error.
+- **Rationale**: OpenAI Responses requires every `function_call` in conversation history to have a matching `function_call_output` before the next request. Interrupting after an assistant tool-call message but before tool results left the in-memory transcript invalid, causing `continue` to fail with `No tool output found for function call`.
+- **Alternatives considered**: Drop the assistant tool-call message on cancellation (rejected: loses visible transcript state and is harder to make safe), Wait for all tools to finish after interruption (rejected: violates user interruption intent), Only handle this in OpenAI serialization (rejected: the transcript invariant should be provider-independent).
+- **Context**: Task 062 — failure observed during `web-deep-research` after interrupting parallel `subagent` tool calls and then continuing.
+
+## 2026-05-25 — Web Deep Research Uses Ledger and Reconciliation Gates
+
+- **Decision**: The `web-deep-research` skill now requires a canonical `00-candidate-ledger.md`, per-angle candidate/entity deltas, a pre-synthesis `03-reconciliation.md`, and semantic coverage verification. The final report goal is a comprehensive sourced report with concise prose, not a narrow recommendation memo.
+- **Rationale**: Evaluation showed that a discovered and shortlisted candidate could disappear from the final report without explicit rejection. A ledger and reconciliation gate make tracked entities the controlling artifact for synthesis and force explicit dispositions for recommended, conditional, excluded, unresolved, and benchmark-only entities.
+- **Alternatives considered**: Add runtime orchestration code (rejected for this iteration: prompt/artifact gates are smaller and preserve Agent Skills compatibility), Add only a reviewer subagent (rejected: useful but too freeform without a ledger), Keep report terse and recommendation-focused (rejected: user wants wide research with proven information).
+- **Context**: Task 060 — `web-deep-research` reliability improvement after analysis in `docs/research/web-deep-research-skill-evaluation-may-2026.md`.
+
+## 2026-05-25 — Subagent Timeout Floor Matches Default
+
+- **Decision**: Subagent execution now enforces a 5 minute minimum timeout and falls back to `subagent.DefaultTimeout` when no configured timeout is available. The documented `subagent_timeout` string form (for example, `"5m"`) is accepted by config parsing.
+- **Rationale**: A 2 minute minimum was too short for delegated tasks that require multiple model/tool iterations, especially local or slower models. Tau already documented a 5 minute default, so the effective minimum should match that expectation instead of letting model-generated `2m` values cancel useful work early.
+- **Alternatives considered**: Keep 2 minute minimum and only change the tool prompt (rejected: existing model behavior can still emit short timeouts), Remove subagent timeout entirely (rejected: bounded execution is still needed), Increase default above 5 minutes (rejected: user can configure longer values explicitly).
+- **Context**: User reported subagents still failing with `subagent: execution timed out after 2m0s: context deadline exceeded` after the OpenAI replay fix.
+
+## 2026-05-24 — OpenAI Responses Function Call Replay Omits Item IDs
+
+- **Decision**: OpenAI Responses follow-up request serialization preserves `function_call.call_id` but omits the provider item `id` (`fc_...`) when replaying previous assistant tool calls.
+- **Rationale**: Reasoning-capable OpenAI Responses models can require a `function_call` item ID to be replayed with its paired native `reasoning` item (`rs_...`). Tau currently stores reasoning summaries as `BlockThinking` display text, not native encrypted reasoning items. Replaying `fc_...` without the matching `rs_...` causes a 400 Bad Request. `call_id` is sufficient for linking `function_call_output` tool results, so omitting `id` is the smallest safe fix.
+- **Alternatives considered**: Persist and replay native OpenAI Responses reasoning items and encrypted content (rejected for this fix: broader schema/storage change), Drop composite `call_id|item_id` entirely (rejected: keeping it preserves parse-time information and existing tool result stripping logic).
+- **Context**: User reported subagent call failure followed by OpenAI error: `function_call` item was provided without required `reasoning` item.
+
+## 2026-05-24 — Deterministic Model Fallback
+
+- **Decision**: Model selection fallback is now deterministic and only considers connected providers:
+  - `resolveModel()` helper implements priority: explicit CLI > valid resumed session > valid config default > sorted connected fallback
+  - Fallback sorts candidates by provider name then model ID (alphabetical) before selecting
+  - Only models from registered/connected providers are considered for fallback
+  - Explicit CLI model requests do NOT silently fall back (user should know their request failed)
+  - `ResumeSession` falls back to config default when resumed session model provider is unavailable
+  - **New session model selection**: When creating a new session (not resume/continue), tau now checks the most recent session file for its model and uses it as a fallback before config default. This ensures that when a user sets a model via `/model` and then restarts tau, the new session picks up the most recent session's model.
+- **Rationale**: Previous fallback iterated `ModelRegistry.ListAll()` which iterates a Go map (non-deterministic order), picking "first Ollama model" unpredictably. This caused Tau to open with random `ollama/ministral` or `ollama/gemma` models instead of the user's saved `/model` choice. `ResumeSession` also kept the current model when the resumed model was unavailable, ignoring the user's configured `default_model`. Additionally, new sessions didn't check the most recent session file for its model, causing tau to fall back to config default or random models instead of the user's last-used model.
+- **Alternatives considered**: Use provider-specific priority list (rejected: adds maintenance burden, alphabetical sort is simpler and deterministic), Always fall back even for explicit CLI requests (rejected: silent fallback hides configuration problems from users), Store last-used model in a separate file (rejected: session file already has this info, no need for duplication)
+- **Context**: User reported model remembering was unreliable — sometimes correct, sometimes random Ollama models.
+
+## 2026-05-24 — Model Resume Reliability
+
+- **Decision**: Session selection and model restoration now use file modification time and saved session state:
+  - `LatestSessionFile` selects sessions by file modification time (mtime), not filename creation timestamp
+  - Filename is used as a deterministic tie-breaker when mtimes are equal
+  - `ResumeSession` restores the saved model and provider from the resumed session's `model_change` entry
+  - Compaction entries are written as `CompactionData` directly (not double-wrapped `SessionEntry`)
+- **Rationale**: Previous `LatestSessionFile` sorted by filename string, which encodes creation time to second precision. If two sessions were created in the same second, the random ID suffix decided the winner unpredictably. Sessions modified after creation (e.g., via `/resume`) were not selected as "latest". `ResumeSession` ignored the saved model, keeping the runtime model instead. The compaction bug caused malformed data that could not be read back.
+- **Alternatives considered**: Use session header timestamp instead of file mtime (rejected: requires reading every file, mtime is simpler and matches PI's approach), Store creation time in header and sort by that (rejected: doesn't solve the "modified after creation" problem)
+- **Context**: User reported model remembering was unreliable — sometimes correct, sometimes not.
+
+## 2026-05-24 — OpenAI Responses API Tool Call Fix
+
+- **Decision**: Fixed OpenAI Responses API provider to correctly parse streaming tool call events and properly format tool results for multi-turn conversations.
+  - SSE event parsing now handles nested `item` field in `response.output_item.added` events (OpenAI sends `{"item": {"id": "fc_xxx", "type": "function_call", "call_id": "call_xxx", ...}}`)
+  - Tool call IDs use composite format `call_id|item_id` to preserve both identifiers required by the Responses API
+  - Tool results are now sent as `{"type": "function_call_output", "call_id": "...", "output": "..."}` items instead of plain user messages
+  - Assistant messages with tool calls are serialized as proper Responses API input items (separate `message` and `function_call` items)
+- **Rationale**: The previous implementation parsed `response.output_item.added` data as a flat object with `id`, `type`, `name` at the top level. OpenAI actually nests these fields under an `item` key. This caused tool calls to be silently dropped — the model would think, emit a tool call, Tau would miss it, see no tool calls in the response, and stop the agent loop. Additionally, tool results were sent as plain user messages instead of proper `function_call_output` items, which the Responses API requires for correct conversation continuation.
+- **Alternatives considered**: Use `response.output_item.done` instead of `added` for tool call parsing (rejected: `added` is the correct event for starting tool call accumulation), Send tool results as user messages with special formatting (rejected: Responses API requires `function_call_output` items)
+- **Context**: User reported OpenAI models stopping after thinking block instead of executing tools and continuing the agent loop.
+
+## 2026-05-24 — Model Selection Persistence via Canonical Provider/ModelID
+
+- **Decision**: Model identity is now persisted and restored as a canonical `provider/modelID` pair everywhere:
+  - `config.json` `default_model` stores `provider/modelID` (e.g., `anthropic/claude-sonnet-4-20250514`)
+  - Session `model_change` entries store both `model_id` and `provider`
+  - `/model` command passes `provider/modelID` to `SetModel`
+  - `ModelRegistry` uses compound `provider/modelID` keys internally, allowing same model ID under multiple providers
+  - `CreateSession` restores model from resumed session with priority: explicit CLI > resumed session > config default > auto fallback
+  - `SetModel` reloads config before saving to avoid clobbering `/connect`/`/disconnect` changes
+- **Rationale**: Previous implementation stored only bare model ID, causing provider identity loss across restarts. Same model ID under different providers could not be distinguished. Config writes from cached startup state clobbered provider config changes made during the session.
+- **Backward compatibility**: Old session files with only `model_id` (no provider) still work — resolver falls back to smart disambiguation. Old config.json with bare model IDs still work — resolver handles both formats.
+- **Alternatives considered**: Separate `default_provider` + `default_model` config fields (rejected: more complex, canonical ref is simpler), hash-based model identity (rejected: loses human readability)
+- **Context**: Task 051 — user reported inconsistent model/provider restoration across Tau restarts.
+
+## 2026-05-23 — Subagent Model Resolution via Provider Registry
+
+- **Decision**: Subagent model resolution now uses a 4-step priority chain with the provider registry instead of blindly inheriting the parent's provider type:
+  1. Agent frontmatter model (from user-defined agent `SKILL.md`)
+  2. Prompt model (specified in subagent tool call)
+  3. Parent agent's model
+  4. Subagent default models list (first available provider)
+- **Rationale**: The previous implementation inherited the parent's `Provider` and `API` fields when a custom model was specified, causing cross-provider subagent calls to fail. For example, a parent using `claude-sonnet-4-20250514` (anthropic) that spawned a subagent with model `ministral-3:14b` would send the Ollama model ID to the Anthropic API, resulting in `provider stream error`. The fix uses `provReg.ResolveModelWithFallback()` to correctly resolve the model to its actual provider.
+- **Alternatives considered**: Require explicit `provider/model` format for all cross-provider calls (rejected: breaks natural model name resolution), auto-detect provider from model ID pattern (rejected: fragile, requires maintaining pattern list)
+- **Context**: Bug discovered during web-deep-research skill execution — all 3 researcher subagents failed with identical `provider stream error: model: claude-sonnet-4-20250514`. Analysis saved to `docs/research/subagent-provider-stream-error/`.
+
+## 2026-05-23 — Canonical provider reassignment requires matching model ID
+
+- **Decision**: `reassignToCanonicalProvider()` only reassigns a model to its canonical provider (openai, anthropic, google) if the canonical provider already has a model with the exact same ID in the catalog. Previously, any model matching the ID prefix pattern (e.g., `gpt-*` → openai) was reassigned regardless of whether the canonical provider had that model.
+- **Rationale**: Proxy providers in the models.dev catalog use non-standard model IDs (e.g., `gpt-5-5` with hyphens instead of `gpt-5.5` with dots, `openai-gpt-55`, `databricks-gpt-5-5`). When these were blindly reassigned to the canonical provider, the model ID stayed non-standard but the BaseURL pointed to the real API (e.g., `https://api.openai.com/v1`). This caused `Bad request: The requested model 'gpt-5-5' does not exist` errors when calling the real OpenAI API. The fix ensures only models that the canonical provider actually offers get reassigned.
+- **Alternatives considered**: Normalize proxy model IDs to canonical format (rejected: fragile, would need mapping for every proxy variant), Blocklist non-standard ID patterns (rejected: maintenance burden, new patterns emerge constantly)
+- **Context**: Bug discovered when user selected `gpt-5.5` but config.json saved `gpt-5-5` from frogbot provider, which was incorrectly reassigned to openai.
+
 ## 2026-05-14 — OpenAI-Compatible Provider Streaming Architecture
 
 - **Decision**: `OpenAICompatProvider.Stream()` makes direct HTTP requests using `net/http` with `bufio.Scanner` for incremental SSE parsing, bypassing `DefaultHTTPClient`
@@ -254,8 +356,8 @@
 
 ## 34. Tool schema $ref inlining for all providers (Task 044)
 
-- **Decision**: Create shared `sanitizeToolSchema()` function that converts `*jsonschema.Schema` to `map[string]any`, strips meta fields (`$schema`, `$id`), and recursively inlines all `$ref` references from `$defs`. Applied to Anthropic, OpenAI Responses, and OpenAI-compat providers. OpenAI Responses API also conditionally excludes `session_usage` from `include` field when using Zen (not supported). OpenAI tools also include `type: "function"` on tool objects (Responses API requirement).
-- **Rationale**: `github.com/invopop/jsonschema` generates `$ref`/`$defs` format for nested types. Anthropic requires `type: "object"` at top level of `input_schema` and rejects `$ref`. OpenAI Responses API also rejects `$ref`. OpenAI-compat providers (Ollama, etc.) may also reject `$ref`. Shared function avoids duplication and ensures consistent behavior across all providers. The `session_usage` field is only supported by official OpenAI API — Zen's OpenAI endpoint rejects it with a validation error.
+- **Decision**: Create shared `sanitizeToolSchema()` function that converts `*jsonschema.Schema` to `map[string]any`, strips meta fields (`$schema`, `$id`), and recursively inlines all `$ref` references from `$defs`. Applied to Anthropic, OpenAI Responses, and OpenAI-compat providers. OpenAI tools include `type: "function"` on tool objects (Responses API requirement). The `include` field only uses valid OpenAI Responses API values (`reasoning.encrypted_content` for reasoning models) — `session_usage` is not a supported value and was removed.
+- **Rationale**: `github.com/invopop/jsonschema` generates `$ref`/`$defs` format for nested types. Anthropic requires `type: "object"` at top level of `input_schema` and rejects `$ref`. OpenAI Responses API also rejects `$ref`. OpenAI-compat providers (Ollama, etc.) may also reject `$ref`. Shared function avoids duplication and ensures consistent behavior across all providers. The `session_usage` value was incorrectly added — OpenAI Responses API rejects it with: `Invalid value: 'session_usage'. Supported values are: 'file_search_call.results', 'web_search_call.results', ...`
 - **Alternatives considered**: Per-provider schema sanitization (rejected: duplication, maintenance burden), Keep `$ref` and hope providers accept it (rejected: verified failures via curl)
 - **Context**: Task 044 — Zen Provider Anthropic & OpenAI Error Handling. Discovered during Task 043 manual verification.
 

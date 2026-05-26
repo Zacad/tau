@@ -7,9 +7,9 @@ import (
 	"strings"
 	"testing"
 
-	tea "charm.land/bubbletea/v2"
 	"charm.land/bubbles/v2/textarea"
 	"charm.land/bubbles/v2/viewport"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/adam/tau/internal/sdk"
 	"github.com/adam/tau/internal/testutil"
@@ -245,6 +245,74 @@ func TestSlashCommands(t *testing.T) {
 }
 
 // TestEscClearsInput verifies that Esc clears the input when idle.
+func TestExecuteCommand_NewResetsFooterContextUsage(t *testing.T) {
+	tmpDir := testutil.TempDir(t)
+	testutil.SetHomeEnv(t, tmpDir)
+
+	// Create auth.json with an API key so session model resolution succeeds.
+	tauDir := tmpDir + "/.tau"
+	if err := os.MkdirAll(tauDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(tauDir+"/auth.json", []byte(`{"openai": "sk-test-key"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	s, err := sdk.CreateSession(context.Background(), sdk.SessionOptions{
+		Model:      "openai/gpt-4o",
+		WorkingDir: tmpDir,
+		Ephemeral:  true,
+	})
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	defer s.Close()
+
+	m := NewModel(s)
+	m.width = 120
+	m.height = 40
+	m.contextWindow = 200000
+	m.contextTokens = 54321
+	m.contextKnown = true
+	m.turnCount = 3
+	m.usage = types.Usage{TotalTokens: 999}
+
+	before := stripANSI(m.renderFooter())
+	if !strings.Contains(before, "ctx:27.2%/200k") {
+		t.Fatalf("expected precondition footer to show previous context usage, got %q", before)
+	}
+
+	handled, cmd := m.executeCommand("/new")
+	if !handled {
+		t.Fatal("/new should be handled")
+	}
+	if cmd != nil {
+		t.Fatal("/new should not return a tea.Cmd")
+	}
+
+	if m.contextTokens != 0 {
+		t.Fatalf("contextTokens = %d, want 0", m.contextTokens)
+	}
+	if !m.contextKnown {
+		t.Fatal("contextKnown should remain true for an empty session with known context window")
+	}
+	if m.turnCount != 0 {
+		t.Fatalf("turnCount = %d, want 0", m.turnCount)
+	}
+	if m.usage.TotalTokens != 0 {
+		t.Fatalf("usage.TotalTokens = %d, want 0", m.usage.TotalTokens)
+	}
+
+	expectedCtx := fmt.Sprintf("ctx:0%%/%s", formatTokens(m.session.Model().ContextWindow))
+	after := stripANSI(m.renderFooter())
+	if strings.Contains(after, "ctx:27.2%/200k") {
+		t.Fatalf("footer should not show stale context usage after /new: %q", after)
+	}
+	if !strings.Contains(after, expectedCtx) {
+		t.Fatalf("footer should show reset context usage after /new, got %q (want substring %q)", after, expectedCtx)
+	}
+}
+
 func TestEscClearsInput(t *testing.T) {
 	m := newTestModel()
 	m.input.SetValue("hello")
@@ -330,12 +398,12 @@ func newTestModel() *Model {
 	r, _ := NewRenderer(80)
 
 	m := &Model{
-		state:          stateIdle,
-		viewport:       vp,
-		input:          ta,
-		modelName:      "test-model",
-		cwd:            "/test",
-		pendingBuilder: new(strings.Builder),
+		state:           stateIdle,
+		viewport:        vp,
+		input:           ta,
+		modelName:       "test-model",
+		cwd:             "/test",
+		pendingBuilder:  new(strings.Builder),
 		glamourRenderer: r,
 		commandRegistry: NewCommandRegistry(),
 	}
@@ -356,6 +424,27 @@ func TestShiftEnter_InsertsNewline(t *testing.T) {
 	}
 	if m.input.Value() != "hello\n" {
 		t.Fatalf("expected 'hello\\n', got %q", m.input.Value())
+	}
+}
+
+func TestPaletteInputReceivesPasteMsg(t *testing.T) {
+	m := newTestModel()
+	m.input.Focus()
+	m.paletteActive = true
+	m.palette.active = true
+	m.palette.ShowInput("web-research", "Perform deep web research")
+
+	updated, _ := m.Update(tea.PasteMsg{Content: "tau custom commands"})
+
+	model, ok := updated.(*Model)
+	if !ok {
+		t.Fatalf("updated model type = %T, want *Model", updated)
+	}
+	if got := model.palette.input.Value(); got != "tau custom commands" {
+		t.Fatalf("palette input value = %q, want pasted content", got)
+	}
+	if got := model.input.Value(); got != "" {
+		t.Fatalf("main input value = %q, want empty", got)
 	}
 }
 
