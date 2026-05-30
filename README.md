@@ -34,8 +34,36 @@ Built for a single user who wants skills and subagents working out of the box â€
 
 ## Installation
 
+### GitHub Release Archives
+
+Download the archive for your platform from the [GitHub Releases](https://github.com/Zacad/tau/releases) page, extract it, and place the `tau` binary on your `PATH`.
+
+Linux example:
+
 ```bash
-git clone https://github.com/adam/tau.git
+tar -xzf tau_0.1.0_linux_amd64.tar.gz
+sudo install -m 0755 tau_0.1.0_linux_amd64/tau /usr/local/bin/tau
+tau --version
+```
+
+macOS example:
+
+```bash
+tar -xzf tau_0.1.0_darwin_arm64.tar.gz
+sudo install -m 0755 tau_0.1.0_darwin_arm64/tau /usr/local/bin/tau
+tau --version
+```
+
+Windows users can download `tau_0.1.0_windows_amd64.zip`, extract `tau.exe`, and add its directory to `PATH`.
+
+Verify downloaded archives with `checksums.txt` from the release assets.
+
+Homebrew support is planned after the GitHub archive release process is stable.
+
+### Build From Source
+
+```bash
+git clone https://github.com/Zacad/tau.git
 cd tau
 go build -o tau ./cmd/tau
 ```

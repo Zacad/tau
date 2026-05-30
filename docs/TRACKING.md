@@ -79,6 +79,7 @@
 | 063 | **Reset Footer Context Usage On New Session** | 📋 Planned | 2026-05-25 |
 | 064 | **Canonical Tool Lifecycle Events and TUI Tool Metadata** | ✅ Done | 2026-05-26 |
 | 065 | **Stale Model Fallback and Default Repair** | ✅ Done | 2026-05-28 |
+| 066 | **First Release** | ✅ Done | 2026-05-30 |
 
 ## Active Tasks
 - None
@@ -87,6 +88,7 @@
 - 063: Reset Footer Context Usage On New Session (2026-05-25)
 
 ## Completed
+- 066: First Release (2026-05-30)
 - 065: Stale Model Fallback and Default Repair (2026-05-28)
 - 064: Canonical Tool Lifecycle Events and TUI Tool Metadata (2026-05-26)
 - 062: Interrupted Tool Call Continuation (2026-05-25)

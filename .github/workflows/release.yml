@@ -1,0 +1,124 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to release, for example v0.1.0'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ github.event.inputs.tag || github.ref_name }}
+    steps:
+      - name: Validate tag
+        run: |
+          set -euo pipefail
+          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Release tags must match vMAJOR.MINOR.PATCH, got: $TAG" >&2
+            exit 1
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+          fetch-depth: 0
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Test
+        run: go test -short ./...
+
+      - name: Build archives
+        run: |
+          set -euo pipefail
+          VERSION="${TAG#v}"
+          mkdir -p dist/packages
+
+          build_archive() {
+            local goos="$1"
+            local goarch="$2"
+            local archive_ext="$3"
+            local package="tau_${VERSION}_${goos}_${goarch}"
+            local package_dir="dist/packages/${package}"
+            local binary="tau"
+
+            if [[ "$goos" == "windows" ]]; then
+              binary="tau.exe"
+            fi
+
+            mkdir -p "$package_dir"
+            CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" go build \
+              -trimpath \
+              -ldflags "-s -w -X main.version=${VERSION}" \
+              -o "${package_dir}/${binary}" \
+              ./cmd/tau
+
+            cp README.md LICENSE "$package_dir/"
+
+            if [[ "$archive_ext" == "zip" ]]; then
+              (cd dist/packages && zip -r "../${package}.zip" "$package")
+            else
+              tar -C dist/packages -czf "dist/${package}.tar.gz" "$package"
+            fi
+          }
+
+          build_archive linux amd64 tar.gz
+          build_archive linux arm64 tar.gz
+          build_archive darwin amd64 tar.gz
+          build_archive darwin arm64 tar.gz
+          build_archive windows amd64 zip
+
+          rm -rf dist/packages
+          (cd dist && sha256sum *.tar.gz *.zip > checksums.txt)
+
+      - name: Smoke test Linux archive
+        run: |
+          set -euo pipefail
+          VERSION="${TAG#v}"
+          mkdir -p /tmp/tau-smoke
+          tar -C /tmp/tau-smoke -xzf "dist/tau_${VERSION}_linux_amd64.tar.gz"
+          "/tmp/tau-smoke/tau_${VERSION}_linux_amd64/tau" --version
+
+      - name: Prepare release notes
+        run: |
+          set -euo pipefail
+          VERSION="${TAG#v}"
+          cat > release-notes.md <<EOF
+Tau ${VERSION}
+
+First Tau release.
+
+Install by downloading the archive for your platform, extracting it, and placing the tau binary on your PATH.
+
+Verify downloads with checksums.txt.
+EOF
+
+      - name: Create or update GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/*.tar.gz dist/*.zip dist/checksums.txt --clobber
+          else
+            gh release create "$TAG" \
+              --verify-tag \
+              --title "$TAG" \
+              --notes-file release-notes.md \
+              dist/*.tar.gz dist/*.zip dist/checksums.txt
+          fi

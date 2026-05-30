@@ -2,6 +2,13 @@
 
 <!-- Architectural and design decisions log -->
 
+## 2026-05-30 — First Release Uses GitHub Archives
+
+- **Decision**: Tau `0.1.0` is distributed as GitHub Release archives built by GitHub Actions from semver tags. The first release publishes Linux amd64/arm64, macOS amd64/arm64, Windows amd64, and `checksums.txt`. Homebrew, AppImage, Flatpak, OS packages, installers, and signing are deferred.
+- **Rationale**: Tau is currently a Go CLI, so archive distribution is the smallest reliable release path. PI uses a similar tag-triggered archive release model. OpenCode's mature distribution stack is useful as a direction, but too complex for Tau's first release.
+- **Alternatives considered**: AppImage and Flatpak (rejected: GUI-oriented and unnecessary for a CLI), Homebrew in first release (deferred until asset naming and release workflow are stable), local manual builds (rejected as primary path because GitHub Actions is more reproducible across platforms), copying OpenCode's full installer/publish system (rejected as premature complexity).
+- **Context**: Task 066 — create the first Tau release, tag `v0.1.0`, build platform binaries, and publish a GitHub Release.
+
 ## 2026-05-28 — Model Fallback Repairs Stale Defaults
 
 - **Decision**: Startup and resume model resolution now prefer models from connected providers and repair stale persisted model state after automatic fallback. `SetModel` resolves against connected providers and refuses unconnected providers before mutating session/config/agent state.
