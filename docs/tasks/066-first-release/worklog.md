@@ -23,3 +23,5 @@
   - `TestRun_E2E_BuiltinType_QA`
 - `go test -short ./...` passed after fixing a deterministic SDK test expectation that depended on local Ollama discovery state.
 - Local version build verification for `0.1.0` passed.
+- After pushing `v0.1.0`, GitHub rejected `.github/workflows/release.yml` due YAML syntax in the release-notes heredoc before any release jobs ran.
+- Replaced the heredoc with `printf` statements so the workflow YAML parses correctly.

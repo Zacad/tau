@@ -98,15 +98,12 @@ jobs:
         run: |
           set -euo pipefail
           VERSION="${TAG#v}"
-          cat > release-notes.md <<EOF
-Tau ${VERSION}
-
-First Tau release.
-
-Install by downloading the archive for your platform, extracting it, and placing the tau binary on your PATH.
-
-Verify downloads with checksums.txt.
-EOF
+          {
+            printf 'Tau %s\n\n' "$VERSION"
+            printf 'First Tau release.\n\n'
+            printf 'Install by downloading the archive for your platform, extracting it, and placing the tau binary on your PATH.\n\n'
+            printf 'Verify downloads with checksums.txt.\n'
+          } > release-notes.md
 
       - name: Create or update GitHub Release
         env:
