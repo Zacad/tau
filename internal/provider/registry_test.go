@@ -19,12 +19,12 @@ func TestRegistry_ResolveModelWithFallback_ExactProviderModel(t *testing.T) {
 		t.Fatalf("expected openai/gpt-4o, got %s/%s", m.Provider, m.ID)
 	}
 
-	m, err = r.ResolveModelWithFallback("anthropic/claude-sonnet-4-20250514")
+	m, err = r.ResolveModelWithFallback("anthropic/claude-sonnet-4-6")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if m.ID != "claude-sonnet-4-20250514" || m.Provider != "anthropic" {
-		t.Fatalf("expected anthropic/claude-sonnet-4-20250514, got %s/%s", m.Provider, m.ID)
+	if m.ID != "claude-sonnet-4-6" || m.Provider != "anthropic" {
+		t.Fatalf("expected anthropic/claude-sonnet-4-6, got %s/%s", m.Provider, m.ID)
 	}
 }
 
@@ -120,14 +120,14 @@ func TestIsAlias(t *testing.T) {
 		id      string
 		isAlias bool
 	}{
-		{"gpt-4o", true},                       // no date suffix
-		{"claude-sonnet-4", true},               // no date suffix
-		{"gemini-2.5-pro", true},               // no date suffix
-		{"gpt-4o-latest", true},                 // explicit -latest
-		{"claude-sonnet-4-20250514", false},     // date suffix
-		{"claude-3-7-sonnet-20250219", false},  // date suffix
-		{"gemini-2.0-flash-20241201", false},   // date suffix
-		{"short", true},                         // too short for date
+		{"gpt-4o", true},                      // no date suffix
+		{"claude-sonnet-4", true},             // no date suffix
+		{"gemini-2.5-pro", true},              // no date suffix
+		{"gpt-4o-latest", true},               // explicit -latest
+		{"claude-sonnet-4-20250514", false},   // date suffix
+		{"claude-3-7-sonnet-20250219", false}, // date suffix
+		{"gemini-2.0-flash-20241201", false},  // date suffix
+		{"short", true},                       // too short for date
 	}
 
 	for _, tc := range tests {

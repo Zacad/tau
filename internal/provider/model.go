@@ -195,8 +195,8 @@ func (r *ModelRegistry) loadBuiltIn() {
 	// Minimal Anthropic fallback
 	anthropicModels := []types.Model{
 		{
-			ID:            "claude-sonnet-4-20250514",
-			Name:          "Claude Sonnet 4",
+			ID:            "claude-sonnet-4-6",
+			Name:          "Claude Sonnet 4.6",
 			Provider:      "anthropic",
 			API:           "anthropic-messages",
 			BaseURL:       "https://api.anthropic.com/v1",

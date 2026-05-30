@@ -133,6 +133,13 @@ type resolveModelResult struct {
 	source string // "cli", "session", "config", "fallback", "none"
 }
 
+func canonicalModelRef(model types.Model) string {
+	if model.Provider == "" || model.ID == "" {
+		return ""
+	}
+	return model.Provider + "/" + model.ID
+}
+
 // resolveModel selects a model using deterministic priority:
 // explicit pattern > config default > deterministic connected fallback.
 // Only considers models whose providers are actually registered.
@@ -141,16 +148,17 @@ type resolveModelResult struct {
 func resolveModel(pattern string, cfgDefault string, provReg *provider.Registry, explicitCLI bool) resolveModelResult {
 	// Step 1: Try the explicit/resumed pattern
 	if pattern != "" {
+		if model, prov, ok := resolveConnectedModel(pattern, provReg); ok {
+			source := "cli"
+			if !explicitCLI {
+				source = "session"
+			}
+			return resolveModelResult{model: model, prov: prov, source: source}
+		}
+
 		model, err := provReg.ResolveModelWithFallback(pattern)
 		if err == nil {
-			if prov, ok := provReg.Get(model.Provider); ok {
-				source := "cli"
-				if !explicitCLI {
-					source = "session"
-				}
-				return resolveModelResult{model: model, prov: prov, source: source}
-			}
-			slog.Warn("resolved model provider not registered",
+			slog.Warn("resolved model provider not registered or unavailable",
 				"pattern", pattern, "provider", model.Provider)
 		} else {
 			slog.Warn("failed to resolve model pattern", "pattern", pattern, "error", err)
@@ -164,12 +172,13 @@ func resolveModel(pattern string, cfgDefault string, provReg *provider.Registry,
 
 	// Step 2: Try config default
 	if cfgDefault != "" {
+		if model, prov, ok := resolveConnectedModel(cfgDefault, provReg); ok {
+			slog.Info("using config default model", "model", model.ID, "provider", model.Provider)
+			return resolveModelResult{model: model, prov: prov, source: "config"}
+		}
+
 		model, err := provReg.ResolveModelWithFallback(cfgDefault)
 		if err == nil {
-			if prov, ok := provReg.Get(model.Provider); ok {
-				slog.Info("using config default model", "model", model.ID, "provider", model.Provider)
-				return resolveModelResult{model: model, prov: prov, source: "config"}
-			}
 			slog.Warn("config default model provider not registered",
 				"default_model", cfgDefault, "provider", model.Provider)
 		} else {
@@ -221,6 +230,130 @@ func resolveModel(pattern string, cfgDefault string, provReg *provider.Registry,
 
 	slog.Info("no model available, session created without model — use /connect to add a provider")
 	return resolveModelResult{}
+}
+
+func resolveConnectedModel(pattern string, provReg *provider.Registry) (types.Model, provider.Provider, bool) {
+	pattern = strings.TrimSpace(pattern)
+	if pattern == "" {
+		return types.Model{}, nil, false
+	}
+
+	connected := provReg.ListProviders()
+	connectedSet := make(map[string]bool, len(connected))
+	for _, name := range connected {
+		connectedSet[name] = true
+	}
+
+	var models []types.Model
+	for _, m := range provReg.Models().ListAll() {
+		if connectedSet[m.Provider] {
+			models = append(models, m)
+		}
+	}
+	if len(models) == 0 {
+		return types.Model{}, nil, false
+	}
+
+	if m, ok := findExactConnectedProviderModel(pattern, models); ok {
+		prov, _ := provReg.Get(m.Provider)
+		return m, prov, true
+	}
+	if m, ok := findExactConnectedBareID(pattern, models); ok {
+		prov, _ := provReg.Get(m.Provider)
+		return m, prov, true
+	}
+	if m, ok := findBestConnectedPartial(pattern, models); ok {
+		prov, _ := provReg.Get(m.Provider)
+		return m, prov, true
+	}
+
+	return types.Model{}, nil, false
+}
+
+func findExactConnectedProviderModel(ref string, models []types.Model) (types.Model, bool) {
+	slashIdx := strings.Index(ref, "/")
+	if slashIdx == -1 {
+		return types.Model{}, false
+	}
+	providerName := strings.ToLower(strings.TrimSpace(ref[:slashIdx]))
+	modelID := strings.TrimSpace(ref[slashIdx+1:])
+	for _, m := range models {
+		if strings.ToLower(m.Provider) == providerName && strings.EqualFold(m.ID, modelID) {
+			return m, true
+		}
+	}
+	return types.Model{}, false
+}
+
+func findExactConnectedBareID(id string, models []types.Model) (types.Model, bool) {
+	var matches []types.Model
+	for _, m := range models {
+		if strings.EqualFold(m.ID, id) {
+			matches = append(matches, m)
+		}
+	}
+	if len(matches) != 1 {
+		return types.Model{}, false
+	}
+	return matches[0], true
+}
+
+func findBestConnectedPartial(pattern string, models []types.Model) (types.Model, bool) {
+	lower := strings.ToLower(pattern)
+	var matches []types.Model
+	for _, m := range models {
+		if strings.Contains(strings.ToLower(m.ID), lower) || strings.Contains(strings.ToLower(m.Name), lower) {
+			matches = append(matches, m)
+		}
+	}
+	if len(matches) == 0 {
+		return types.Model{}, false
+	}
+	if len(matches) == 1 {
+		return matches[0], true
+	}
+
+	var aliases []types.Model
+	var dated []types.Model
+	for _, m := range matches {
+		if connectedModelIDIsAlias(m.ID) {
+			aliases = append(aliases, m)
+		} else {
+			dated = append(dated, m)
+		}
+	}
+	if len(aliases) > 0 {
+		sort.Slice(aliases, func(i, j int) bool {
+			if aliases[i].Provider != aliases[j].Provider {
+				return aliases[i].Provider < aliases[j].Provider
+			}
+			return aliases[i].ID > aliases[j].ID
+		})
+		return aliases[0], true
+	}
+	sort.Slice(dated, func(i, j int) bool {
+		if dated[i].Provider != dated[j].Provider {
+			return dated[i].Provider < dated[j].Provider
+		}
+		return dated[i].ID > dated[j].ID
+	})
+	return dated[0], true
+}
+
+func connectedModelIDIsAlias(id string) bool {
+	if strings.HasSuffix(id, "-latest") || len(id) < 9 {
+		return true
+	}
+	suffix := id[len(id)-9:]
+	if suffix[0] != '-' {
+		return true
+	}
+	for i := 1; i < 9; i++ {
+		if suffix[i] < '0' || suffix[i] > '9' {
+			return true
+		}
+	}
+	return false
 }
 
 // CreateSession creates a new SDK session, initializing all subsystems.
@@ -342,6 +475,8 @@ func CreateSession(ctx context.Context, opts SessionOptions) (*Session, error) {
 	// Priority: explicit CLI model > resumed session model > most recent session model > config default > auto fallback
 	var model types.Model
 	var prov provider.Provider
+	var selectedResult resolveModelResult
+	var explicitModel bool
 
 	if mockURL != "" {
 		// Use mock model directly — skip normal resolution
@@ -355,7 +490,7 @@ func CreateSession(ctx context.Context, opts SessionOptions) (*Session, error) {
 		prov, _ = provReg.Get("mock")
 	} else {
 		modelPattern := opts.Model
-		explicitModel := modelPattern != ""
+		explicitModel = modelPattern != ""
 
 		// If no explicit model, try resumed session model
 		if !explicitModel && sess != nil {
@@ -381,9 +516,9 @@ func CreateSession(ctx context.Context, opts SessionOptions) (*Session, error) {
 			slog.Info("using model from most recent session file", "model", recentSessionModel, "provider", recentSessionProvider)
 		}
 
-		result := resolveModel(modelPattern, cfg.DefaultModel, provReg, explicitModel)
-		model = result.model
-		prov = result.prov
+		selectedResult = resolveModel(modelPattern, cfg.DefaultModel, provReg, explicitModel)
+		model = selectedResult.model
+		prov = selectedResult.prov
 	}
 
 	// 5. Discover skills and compose system prompt
@@ -423,6 +558,10 @@ func CreateSession(ctx context.Context, opts SessionOptions) (*Session, error) {
 		msgCount:  msgCount,
 		cfg:       cfg,
 		cfgPath:   config.ConfigPath(""),
+	}
+
+	if model.ID != "" && !explicitModel {
+		s.persistResolvedModel(selectedResult)
 	}
 
 	// If resuming, restore usage, thinking level, and messages from session
@@ -589,14 +728,19 @@ func (s *Session) SetModel(pattern string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	model, err := s.provReg.ResolveModelWithFallback(pattern)
-	if err != nil {
-		return fmt.Errorf("resolve model: %w", err)
+	model, prov, ok := resolveConnectedModel(pattern, s.provReg)
+	if !ok {
+		resolved, err := s.provReg.ResolveModelWithFallback(pattern)
+		if err != nil {
+			return fmt.Errorf("resolve model: %w", err)
+		}
+		return fmt.Errorf("provider %q is not connected; use /connect or choose another model", resolved.Provider)
 	}
 
 	slog.Debug("sdk: SetModel", "pattern", pattern, "resolved_model", model.ID, "provider", model.Provider, "reasoning", model.Reasoning)
 
 	s.model = model
+	s.prov = prov
 
 	// Persist model change to session (provider + model ID)
 	if !s.ephemeral && s.sess != nil {
@@ -606,25 +750,12 @@ func (s *Session) SetModel(pattern string) error {
 	}
 
 	// Reload config to avoid clobbering /connect or /disconnect changes made after SDK startup
-	latestCfg, err := config.LoadConfig(s.cfgPath)
-	if err != nil {
-		slog.Warn("failed to reload config before saving default model, using cached", "error", err)
-		latestCfg = s.cfg
-	}
-	// Persist model to config as new default (canonical provider/modelID)
-	latestCfg.DefaultModel = model.Provider + "/" + model.ID
-	if err := config.SaveConfig(latestCfg, s.cfgPath); err != nil {
-		slog.Warn("failed to save default model to config", "error", err)
-	}
-	// Update cached config
-	s.cfg = latestCfg
+	s.persistDefaultModel(model)
 
 	// Switch provider and model on the existing agent (preserves messages).
 	// This matches PI's architecture where model is a mutable state property,
 	// not an agent recreation — conversation history is fully preserved.
-	if prov, ok := s.provReg.Get(model.Provider); ok {
-		s.prov = prov
-
+	{
 		if s.ag == nil {
 			// Agent was nil (e.g., resumed without provider) — create it now.
 			ag := newAgent(s.systemP, s.cwd, prov, model, s.toolReg)
@@ -666,6 +797,55 @@ func (s *Session) SetModel(pattern string) error {
 	}
 
 	return nil
+}
+
+func (s *Session) persistResolvedModel(result resolveModelResult) {
+	if result.model.ID == "" {
+		return
+	}
+
+	if s.sess != nil {
+		currentProvider := s.sess.CurrentProvider()
+		currentModel := s.sess.CurrentModel()
+		if currentProvider != result.model.Provider || currentModel != result.model.ID {
+			if err := s.sess.SetModel(result.model.ID, result.model.Provider); err != nil {
+				slog.Warn("failed to persist resolved model to session", "error", err)
+			}
+		}
+	}
+
+	canonical := canonicalModelRef(result.model)
+	if canonical == "" || s.cfg == nil || s.cfg.DefaultModel == canonical {
+		return
+	}
+
+	// Repair stale or non-canonical defaults after automatic resolution. Explicit
+	// CLI model selection remains non-persistent; /model uses SetModel instead.
+	if result.source == "session" || result.source == "config" || result.source == "fallback" {
+		s.persistDefaultModel(result.model)
+	}
+}
+
+func (s *Session) persistDefaultModel(model types.Model) {
+	canonical := canonicalModelRef(model)
+	if canonical == "" || s.cfgPath == "" {
+		return
+	}
+
+	latestCfg, err := config.LoadConfig(s.cfgPath)
+	if err != nil {
+		slog.Warn("failed to reload config before saving default model, using cached", "error", err)
+		latestCfg = s.cfg
+	}
+	if latestCfg == nil {
+		latestCfg = &config.Config{}
+	}
+	latestCfg.DefaultModel = canonical
+	if err := config.SaveConfig(latestCfg, s.cfgPath); err != nil {
+		slog.Warn("failed to save default model to config", "error", err)
+		return
+	}
+	s.cfg = latestCfg
 }
 
 // Rename updates the session display name.
@@ -775,6 +955,7 @@ func (s *Session) ResumeSession(filePath string) error {
 	if result.model.ID != "" {
 		s.model = result.model
 		s.prov = result.prov
+		s.persistResolvedModel(result)
 		if s.ag != nil {
 			s.ag.SetModel(result.prov, result.model)
 			level := resumedSess.GetThinkingLevelForModel(result.model.ID)

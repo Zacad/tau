@@ -833,6 +833,38 @@ func TestSlashCommand_Model(t *testing.T) {
 	}
 }
 
+func TestNewModel_NoActiveModelShowsGuidance(t *testing.T) {
+	tmpDir := testutil.TempDir(t)
+	testutil.SetHomeEnv(t, tmpDir)
+	t.Setenv("OPENAI_API_KEY", "")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	t.Setenv("GOOGLE_API_KEY", "")
+	t.Setenv("OPENROUTER_API_KEY", "")
+
+	tauDir := tmpDir + "/.tau"
+	if err := os.MkdirAll(tauDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(tauDir+"/config.json", []byte(`{"providers":{"ollama":{"enabled":false}}}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	s, err := sdk.CreateSession(context.Background(), sdk.SessionOptions{WorkingDir: tmpDir, Ephemeral: true})
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	defer s.Close()
+
+	m := tuiModelWithSession(s)
+	if len(m.blocks) == 0 {
+		t.Fatal("expected startup guidance block")
+	}
+	text := m.blocks[0].text
+	if !strings.Contains(text, "/connect") || !strings.Contains(text, "/model") {
+		t.Fatalf("guidance should mention /connect and /model, got %q", text)
+	}
+}
+
 func TestSlashCommand_Model_EscCancels(t *testing.T) {
 	s := newEphemeralSession(t)
 	m := tuiModelWithSession(s)
@@ -893,6 +925,43 @@ func TestSlashCommand_Model_Selection(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("should show confirmation message with model name %q", firstModel)
+	}
+}
+
+func TestSlashCommand_Model_NoModelsShowsActionableGuidance(t *testing.T) {
+	tmpDir := testutil.TempDir(t)
+	testutil.SetHomeEnv(t, tmpDir)
+	t.Setenv("OPENAI_API_KEY", "")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	t.Setenv("GOOGLE_API_KEY", "")
+	t.Setenv("OPENROUTER_API_KEY", "")
+
+	tauDir := tmpDir + "/.tau"
+	if err := os.MkdirAll(tauDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(tauDir+"/config.json", []byte(`{"providers":{"ollama":{"enabled":false}}}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	s, err := sdk.CreateSession(context.Background(), sdk.SessionOptions{WorkingDir: tmpDir, Ephemeral: true})
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	defer s.Close()
+
+	m := tuiModelWithSession(s)
+	m.blocks = nil
+
+	handled, _ := m.executeCommand("/model")
+	if !handled {
+		t.Fatal("/model should be handled")
+	}
+	if len(m.blocks) != 1 {
+		t.Fatalf("expected 1 block, got %d", len(m.blocks))
+	}
+	if !strings.Contains(m.blocks[0].text, "/connect") || !strings.Contains(m.blocks[0].text, "/model") {
+		t.Fatalf("guidance should mention /connect and /model, got %q", m.blocks[0].text)
 	}
 }
 

@@ -2,6 +2,7 @@ package provider
 
 import (
 	"context"
+	"net/http"
 	"testing"
 	"time"
 
@@ -9,6 +10,16 @@ import (
 )
 
 func TestOllamaProvider_WithThinkingLevel(t *testing.T) {
+	client := &http.Client{Timeout: 500 * time.Millisecond}
+	resp, err := client.Get("http://localhost:11434/api/tags")
+	if err != nil {
+		t.Skipf("Ollama is not available: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		t.Skipf("Ollama is not available: status %d", resp.StatusCode)
+	}
+
 	ollama := NewOllamaProvider("http://localhost:11434")
 	model := types.Model{
 		ID:        "gemma4:26b",

@@ -15,8 +15,8 @@ import (
 	"github.com/adam/tau/internal/agent"
 	"github.com/adam/tau/internal/config"
 	"github.com/adam/tau/internal/provider"
-	"github.com/adam/tau/internal/skills"
 	tausession "github.com/adam/tau/internal/session"
+	"github.com/adam/tau/internal/skills"
 	"github.com/adam/tau/internal/testutil"
 	"github.com/adam/tau/internal/tools"
 	"github.com/adam/tau/internal/types"
@@ -161,8 +161,16 @@ func TestSession_SetModel(t *testing.T) {
 	tmpDir := testutil.TempDir(t)
 	s := newTestSession(t, tmpDir, "gpt-4o")
 	defer s.Close()
+	model2, err := s.provReg.ResolveModelWithFallback("gemini-2.5-pro")
+	if err != nil {
+		t.Fatalf("resolve model: %v", err)
+	}
+	s.provReg.Register(&mockProvider{
+		providerName: model2.Provider,
+		model:        model2,
+	})
 
-	err := s.SetModel("gemini-2.5-pro")
+	err = s.SetModel("gemini-2.5-pro")
 	if err != nil {
 		t.Fatalf("SetModel: %v", err)
 	}
@@ -176,9 +184,17 @@ func TestSession_SetModel_AmbiguousPattern(t *testing.T) {
 	tmpDir := testutil.TempDir(t)
 	s := newTestSession(t, tmpDir, "gpt-4o")
 	defer s.Close()
+	model2, err := s.provReg.ResolveModelWithFallback("sonnet")
+	if err != nil {
+		t.Fatalf("resolve model: %v", err)
+	}
+	s.provReg.Register(&mockProvider{
+		providerName: model2.Provider,
+		model:        model2,
+	})
 
 	// "sonnet" matches multiple Anthropic models — should resolve to one deterministically
-	err := s.SetModel("sonnet")
+	err = s.SetModel("sonnet")
 	if err != nil {
 		t.Fatalf("SetModel(sonnet): %v", err)
 	}
@@ -200,6 +216,50 @@ func TestSession_SetModel_NotFound(t *testing.T) {
 	}
 }
 
+func TestSession_SetModel_UnregisteredProviderDoesNotMutateState(t *testing.T) {
+	tmpDir := testutil.TempDir(t)
+	testutil.SetHomeEnv(t, tmpDir)
+
+	tauDir := tmpDir + "/.tau"
+	if err := os.MkdirAll(tauDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(tauDir+"/auth.json", []byte(`{"openai": "sk-test-key"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(tauDir+"/config.json", []byte(`{"default_model":"openai/gpt-4o"}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	s, err := CreateSession(context.Background(), SessionOptions{WorkingDir: tmpDir})
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	defer s.Close()
+
+	before := s.Model()
+	err = s.SetModel("anthropic/claude-sonnet-4-6")
+	if err == nil {
+		t.Fatal("expected error for unregistered provider")
+	}
+
+	after := s.Model()
+	if after.Provider != before.Provider || after.ID != before.ID {
+		t.Fatalf("model mutated after failed SetModel: before=%s/%s after=%s/%s", before.Provider, before.ID, after.Provider, after.ID)
+	}
+
+	loadedCfg, err := config.LoadConfig(tauDir + "/config.json")
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if loadedCfg.DefaultModel != "openai/gpt-4o" {
+		t.Fatalf("default_model mutated after failed SetModel: %q", loadedCfg.DefaultModel)
+	}
+	if s.sess.CurrentProvider() != "openai" || s.sess.CurrentModel() != "gpt-4o" {
+		t.Fatalf("session model mutated after failed SetModel: %s/%s", s.sess.CurrentProvider(), s.sess.CurrentModel())
+	}
+}
+
 func TestSession_SetModel_PreservesMsgCount(t *testing.T) {
 	tmpDir := testutil.TempDir(t)
 	s := newTestSession(t, tmpDir, "gpt-4o")
@@ -209,7 +269,7 @@ func TestSession_SetModel_PreservesMsgCount(t *testing.T) {
 	s.msgCount = 5
 
 	// Register a second mock provider so SetModel can switch to it
-	model2, err := s.provReg.ResolveModelWithFallback("claude-sonnet-4-20250514")
+	model2, err := s.provReg.ResolveModelWithFallback("claude-sonnet-4-6")
 	if err != nil {
 		t.Fatalf("resolve model: %v", err)
 	}
@@ -218,7 +278,7 @@ func TestSession_SetModel_PreservesMsgCount(t *testing.T) {
 		model:        model2,
 	})
 
-	err = s.SetModel("claude-sonnet-4-20250514")
+	err = s.SetModel("claude-sonnet-4-6")
 	if err != nil {
 		t.Fatalf("SetModel: %v", err)
 	}
@@ -244,7 +304,7 @@ func TestSession_SetModel_PreservesMessages(t *testing.T) {
 	s.msgCount = 3
 
 	// Register a second mock provider so SetModel can switch to it
-	model2, err := s.provReg.ResolveModelWithFallback("claude-sonnet-4-20250514")
+	model2, err := s.provReg.ResolveModelWithFallback("claude-sonnet-4-6")
 	if err != nil {
 		t.Fatalf("resolve model: %v", err)
 	}
@@ -254,14 +314,14 @@ func TestSession_SetModel_PreservesMessages(t *testing.T) {
 	})
 
 	// Switch model
-	err = s.SetModel("claude-sonnet-4-20250514")
+	err = s.SetModel("claude-sonnet-4-6")
 	if err != nil {
 		t.Fatalf("SetModel: %v", err)
 	}
 
 	// Verify model changed
-	if s.Model().ID != "claude-sonnet-4-20250514" {
-		t.Fatalf("expected claude-sonnet-4-20250514, got %s", s.Model().ID)
+	if s.Model().ID != "claude-sonnet-4-6" {
+		t.Fatalf("expected claude-sonnet-4-6, got %s", s.Model().ID)
 	}
 	if s.Model().Provider != "anthropic" {
 		t.Fatalf("expected anthropic provider, got %s", s.Model().Provider)
@@ -311,7 +371,7 @@ func TestSession_ListModels_FilteredByConnectedProviders(t *testing.T) {
 	defer s.Close()
 
 	// Register a second provider (anthropic mock)
-	anthropicModel, _ := s.provReg.ResolveModelWithFallback("anthropic/claude-sonnet-4-20250514")
+	anthropicModel, _ := s.provReg.ResolveModelWithFallback("anthropic/claude-sonnet-4-6")
 	s.provReg.Register(&mockProvider{
 		providerName: "anthropic",
 		model:        anthropicModel,
@@ -557,7 +617,7 @@ func TestCreateSession_ToolAllowlist(t *testing.T) {
 	}
 
 	s, err := CreateSession(context.Background(), SessionOptions{
-		Model:      "openai/gpt-4o",
+		Model:         "openai/gpt-4o",
 		WorkingDir:    tmpDir,
 		Ephemeral:     true,
 		ToolAllowlist: []string{"read", "grep"},
@@ -1317,7 +1377,7 @@ func TestSession_RegisterProvider_Anthropic(t *testing.T) {
 	defer s.Close()
 
 	prov := provider.NewAnthropicProvider("test-key")
-	models := []string{"claude-sonnet-4-20250514"}
+	models := []string{"claude-sonnet-4-6"}
 
 	err := s.RegisterProvider(prov, "anthropic", "https://api.anthropic.com/v1", models)
 	if err != nil {
@@ -1326,7 +1386,7 @@ func TestSession_RegisterProvider_Anthropic(t *testing.T) {
 
 	allModels := s.ListModels()
 	for _, m := range allModels {
-		if m.ID == "claude-sonnet-4-20250514" {
+		if m.ID == "claude-sonnet-4-6" {
 			if m.API != "anthropic-messages" {
 				t.Errorf("expected API anthropic-messages, got %s", m.API)
 			}
@@ -1777,7 +1837,7 @@ func TestIsProviderEnabled(t *testing.T) {
 		},
 		{
 			name:     "in config but enabled nil = enabled",
-			cfg:      &config.Config{Providers: map[string]config.ProviderConfig{"openai": {Model:      "openai/gpt-4o"}}},
+			cfg:      &config.Config{Providers: map[string]config.ProviderConfig{"openai": {Model: "openai/gpt-4o"}}},
 			provName: "openai",
 			want:     true,
 		},
@@ -2560,7 +2620,7 @@ func TestSession_SetModelAfterResume_PreservesHistory(t *testing.T) {
 	}
 
 	// Register a second mock provider so SetModel can switch to it
-	model2, err := s.provReg.ResolveModelWithFallback("claude-sonnet-4-20250514")
+	model2, err := s.provReg.ResolveModelWithFallback("claude-sonnet-4-6")
 	if err != nil {
 		t.Fatalf("resolve model: %v", err)
 	}
@@ -2570,14 +2630,15 @@ func TestSession_SetModelAfterResume_PreservesHistory(t *testing.T) {
 	})
 
 	// Switch model mid-conversation
-	err = s.SetModel("claude-sonnet-4-20250514")
+	canonicalRef := model2.Provider + "/" + model2.ID
+	err = s.SetModel(canonicalRef)
 	if err != nil {
 		t.Fatalf("SetModel after resume: %v", err)
 	}
 
 	// Verify model changed
-	if s.Model().ID != "claude-sonnet-4-20250514" {
-		t.Fatalf("expected claude-sonnet-4-20250514, got %s", s.Model().ID)
+	if s.Model().ID != model2.ID {
+		t.Fatalf("expected %s, got %s", model2.ID, s.Model().ID)
 	}
 
 	// Verify ALL messages are still preserved after model switch
@@ -2610,7 +2671,7 @@ func TestSession_SetModel_UpdatesSubagentTool(t *testing.T) {
 	// (we can't directly inspect it, but we can verify it exists)
 
 	// Register a second mock provider so SetModel can switch to it
-	model2, err := s.provReg.ResolveModelWithFallback("claude-sonnet-4-20250514")
+	model2, err := s.provReg.ResolveModelWithFallback("claude-sonnet-4-6")
 	if err != nil {
 		t.Fatalf("resolve model: %v", err)
 	}
@@ -2620,14 +2681,14 @@ func TestSession_SetModel_UpdatesSubagentTool(t *testing.T) {
 	})
 
 	// Switch model
-	err = s.SetModel("claude-sonnet-4-20250514")
+	err = s.SetModel("claude-sonnet-4-6")
 	if err != nil {
 		t.Fatalf("SetModel: %v", err)
 	}
 
 	// Verify the session model changed
-	if s.Model().ID != "claude-sonnet-4-20250514" {
-		t.Fatalf("expected claude-sonnet-4-20250514, got %s", s.Model().ID)
+	if s.Model().ID != "claude-sonnet-4-6" {
+		t.Fatalf("expected claude-sonnet-4-6, got %s", s.Model().ID)
 	}
 	if s.Model().Provider != "anthropic" {
 		t.Fatalf("expected anthropic provider, got %s", s.Model().Provider)
@@ -2676,7 +2737,7 @@ func TestSession_SetModel_WritesCanonicalProviderModelID(t *testing.T) {
 
 	// Register anthropic mock provider with a unique model ID
 	anthropicModel := types.Model{
-		ID:            "claude-sonnet-4-20250514",
+		ID:            "claude-sonnet-4-6",
 		Name:          "Claude Sonnet 4",
 		Provider:      "anthropic",
 		API:           "anthropic-messages",
@@ -2692,7 +2753,7 @@ func TestSession_SetModel_WritesCanonicalProviderModelID(t *testing.T) {
 	})
 
 	// Switch to anthropic model using canonical provider/modelID format
-	err = s.SetModel("anthropic/claude-sonnet-4-20250514")
+	err = s.SetModel("anthropic/claude-sonnet-4-6")
 	if err != nil {
 		t.Fatalf("SetModel: %v", err)
 	}
@@ -2707,8 +2768,8 @@ func TestSession_SetModel_WritesCanonicalProviderModelID(t *testing.T) {
 		t.Fatalf("parse config: %v", err)
 	}
 
-	// Should be "anthropic/claude-sonnet-4-20250514", NOT just "claude-sonnet-4-20250514"
-	expected := "anthropic/claude-sonnet-4-20250514"
+	// Should be "anthropic/claude-sonnet-4-6", NOT just "claude-sonnet-4-6"
+	expected := "anthropic/claude-sonnet-4-6"
 	if loadedCfg.DefaultModel != expected {
 		t.Errorf("default_model = %q, want %q", loadedCfg.DefaultModel, expected)
 	}
@@ -2826,7 +2887,7 @@ func TestSession_ResumeSession_RestoresModelWithProvider(t *testing.T) {
 	}
 
 	// Save a model change with provider
-	if err := sess.SetModel("claude-sonnet-4-20250514", "anthropic"); err != nil {
+	if err := sess.SetModel("claude-sonnet-4-6", "anthropic"); err != nil {
 		t.Fatalf("SetModel: %v", err)
 	}
 
@@ -2847,7 +2908,7 @@ func TestSession_ResumeSession_RestoresModelWithProvider(t *testing.T) {
 
 	// Register anthropic mock provider
 	anthropicModel := types.Model{
-		ID:       "claude-sonnet-4-20250514",
+		ID:       "claude-sonnet-4-6",
 		Name:     "Claude Sonnet 4",
 		Provider: "anthropic",
 		API:      "anthropic-messages",
@@ -2865,8 +2926,8 @@ func TestSession_ResumeSession_RestoresModelWithProvider(t *testing.T) {
 
 	// Verify model and provider were restored
 	resumedModel := s.Model()
-	if resumedModel.ID != "claude-sonnet-4-20250514" {
-		t.Errorf("expected model ID 'claude-sonnet-4-20250514', got %q", resumedModel.ID)
+	if resumedModel.ID != "claude-sonnet-4-6" {
+		t.Errorf("expected model ID 'claude-sonnet-4-6', got %q", resumedModel.ID)
 	}
 	if resumedModel.Provider != "anthropic" {
 		t.Errorf("expected provider 'anthropic', got %q", resumedModel.Provider)
@@ -2990,13 +3051,13 @@ func TestSession_Subscribe_NilAgent(t *testing.T) {
 	}
 
 	s := &Session{
-		ag:       nil,
-		sess:     resumedSess,
-		provReg:  provider.NewRegistry(),
-		prov:     nil,
-		model:    types.Model{},
-		toolReg:  tools.NewRegistry(),
-		cwd:      tmpDir,
+		ag:        nil,
+		sess:      resumedSess,
+		provReg:   provider.NewRegistry(),
+		prov:      nil,
+		model:     types.Model{},
+		toolReg:   tools.NewRegistry(),
+		cwd:       tmpDir,
 		ephemeral: false,
 		msgCount:  1,
 		cfg:       &config.Config{},
@@ -3071,13 +3132,13 @@ func TestSession_SetModel_CreatesAgentAfterNilResume(t *testing.T) {
 	registerBuiltinTools(toolReg, tmpDir, &config.Config{}, nil, types.Model{}, provReg)
 
 	s := &Session{
-		ag:       nil,
-		sess:     resumedSess,
-		provReg:  provReg,
-		prov:     nil,
-		model:    types.Model{},
-		toolReg:  toolReg,
-		cwd:      tmpDir,
+		ag:        nil,
+		sess:      resumedSess,
+		provReg:   provReg,
+		prov:      nil,
+		model:     types.Model{},
+		toolReg:   toolReg,
+		cwd:       tmpDir,
 		ephemeral: false,
 		msgCount:  2,
 		cfg:       &config.Config{},
@@ -3135,13 +3196,13 @@ func TestSession_Steer_NilAgent(t *testing.T) {
 	}
 
 	s := &Session{
-		ag:       nil,
-		sess:     resumedSess,
-		provReg:  provider.NewRegistry(),
-		prov:     nil,
-		model:    types.Model{},
-		toolReg:  tools.NewRegistry(),
-		cwd:      tmpDir,
+		ag:        nil,
+		sess:      resumedSess,
+		provReg:   provider.NewRegistry(),
+		prov:      nil,
+		model:     types.Model{},
+		toolReg:   tools.NewRegistry(),
+		cwd:       tmpDir,
 		ephemeral: false,
 		msgCount:  0,
 		cfg:       &config.Config{},
@@ -3179,13 +3240,13 @@ func TestSession_AgentState_NilAgent(t *testing.T) {
 	}
 
 	s := &Session{
-		ag:       nil,
-		sess:     resumedSess,
-		provReg:  provider.NewRegistry(),
-		prov:     nil,
-		model:    types.Model{},
-		toolReg:  tools.NewRegistry(),
-		cwd:      tmpDir,
+		ag:        nil,
+		sess:      resumedSess,
+		provReg:   provider.NewRegistry(),
+		prov:      nil,
+		model:     types.Model{},
+		toolReg:   tools.NewRegistry(),
+		cwd:       tmpDir,
 		ephemeral: false,
 		msgCount:  0,
 		cfg:       &config.Config{},
@@ -3258,16 +3319,19 @@ func TestCreateSession_AutoFallbackDeterministic(t *testing.T) {
 	tmpDir := testutil.TempDir(t)
 	testutil.SetHomeEnv(t, tmpDir)
 
-	tauDir := tmpDir + ".tau"
+	tauDir := tmpDir + "/.tau"
 	if err := os.MkdirAll(tauDir, 0755); err != nil {
 		t.Fatal(err)
 	}
-	// No auth — only ollama will be available
+	if err := os.WriteFile(tauDir+"/auth.json", []byte(`{"openai": "sk-test-key"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(tauDir+"/config.json", []byte(`{}`), 0644); err != nil {
 		t.Fatal(err)
 	}
 
 	// Run multiple times to verify deterministic behavior
+	var firstProvider, firstModel string
 	for i := 0; i < 5; i++ {
 		s, err := CreateSession(context.Background(), SessionOptions{
 			WorkingDir: tmpDir,
@@ -3277,9 +3341,13 @@ func TestCreateSession_AutoFallbackDeterministic(t *testing.T) {
 			t.Fatalf("iteration %d: CreateSession: %v", i, err)
 		}
 		m := s.Model()
-		// Should always pick the same model (first ollama model alphabetically)
-		if m.Provider != "ollama" {
-			t.Errorf("iteration %d: expected provider 'ollama', got %q", i, m.Provider)
+		if m.Provider == "" || m.ID == "" {
+			t.Fatalf("iteration %d: expected connected fallback model, got empty", i)
+		}
+		if i == 0 {
+			firstProvider, firstModel = m.Provider, m.ID
+		} else if m.Provider != firstProvider || m.ID != firstModel {
+			t.Errorf("iteration %d: expected %s/%s, got %s/%s", i, firstProvider, firstModel, m.Provider, m.ID)
 		}
 		s.Close()
 	}
@@ -3293,15 +3361,17 @@ func TestCreateSession_ConfigDefaultProviderUnavailable_FallsBackToConnectedOnly
 	if err := os.MkdirAll(tauDir, 0755); err != nil {
 		t.Fatal(err)
 	}
-	// Set config default to openai but don't provide auth
+	// Set config default to anthropic but don't provide Anthropic auth.
+	if err := os.WriteFile(tauDir+"/auth.json", []byte(`{"openai": "sk-test-key"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
 	cfg := config.DefaultConfig()
-	cfg.DefaultModel = "openai/gpt-4o"
+	cfg.DefaultModel = "anthropic/claude-sonnet-4-20250514"
 	cfgJSON, _ := json.MarshalIndent(cfg, "", "  ")
 	if err := os.WriteFile(tauDir+"/config.json", cfgJSON, 0644); err != nil {
 		t.Fatal(err)
 	}
 
-	// No auth.json — openai won't be registered, only ollama
 	s, err := CreateSession(context.Background(), SessionOptions{
 		WorkingDir: tmpDir,
 		Ephemeral:  true,
@@ -3311,10 +3381,88 @@ func TestCreateSession_ConfigDefaultProviderUnavailable_FallsBackToConnectedOnly
 	}
 	defer s.Close()
 
-	// Should fall back to ollama (only connected provider)
+	// Should fall back to a connected provider, never the unavailable Anthropic default.
 	m := s.Model()
-	if m.Provider != "ollama" {
-		t.Errorf("expected fallback to 'ollama', got %q", m.Provider)
+	if m.Provider == "" || m.Provider == "anthropic" {
+		t.Errorf("expected connected non-anthropic fallback, got %q", m.Provider)
+	}
+}
+
+func TestCreateSession_ConfigDefaultProviderUnavailable_PersistsFallbackDefault(t *testing.T) {
+	tmpDir := testutil.TempDir(t)
+	testutil.SetHomeEnv(t, tmpDir)
+
+	tauDir := tmpDir + "/.tau"
+	if err := os.MkdirAll(tauDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(tauDir+"/auth.json", []byte(`{"openai": "sk-test-key"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(tauDir+"/config.json", []byte(`{"default_model":"anthropic/claude-sonnet-4-20250514"}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	s, err := CreateSession(context.Background(), SessionOptions{WorkingDir: tmpDir})
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	defer s.Close()
+
+	m := s.Model()
+	if m.Provider == "" || m.ID == "" || m.Provider == "anthropic" {
+		t.Fatalf("expected fallback to a connected non-anthropic model, got %s/%s", m.Provider, m.ID)
+	}
+	wantDefault := m.Provider + "/" + m.ID
+
+	loadedCfg, err := config.LoadConfig(tauDir + "/config.json")
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if loadedCfg.DefaultModel != wantDefault {
+		t.Fatalf("default_model = %q, want %s", loadedCfg.DefaultModel, wantDefault)
+	}
+}
+
+func TestCreateSession_SessionModelUnavailable_PersistsFallbackSessionModel(t *testing.T) {
+	tmpDir := testutil.TempDir(t)
+	testutil.SetHomeEnv(t, tmpDir)
+
+	tauDir := tmpDir + "/.tau"
+	if err := os.MkdirAll(tauDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(tauDir+"/auth.json", []byte(`{"openai": "sk-test-key"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(tauDir+"/config.json", []byte(`{"default_model":"openai/gpt-4o"}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	sessDir := tmpDir + "/.tau/sessions/--tmp--"
+	if err := os.MkdirAll(sessDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	staleSess, err := tausession.CreateSession(sessDir, tmpDir, "stale-session-model", "")
+	if err != nil {
+		t.Fatalf("CreateSession file: %v", err)
+	}
+	if err := staleSess.SetModel("claude-sonnet-4-20250514", "anthropic"); err != nil {
+		t.Fatalf("SetModel: %v", err)
+	}
+	sessionPath := staleSess.File()
+	if err := staleSess.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	s, err := CreateSession(context.Background(), SessionOptions{WorkingDir: tmpDir, SessionPath: sessionPath})
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	defer s.Close()
+
+	if s.sess.CurrentProvider() != "openai" || s.sess.CurrentModel() != "gpt-4o" {
+		t.Fatalf("session model = %s/%s, want openai/gpt-4o", s.sess.CurrentProvider(), s.sess.CurrentModel())
 	}
 }
 
@@ -3433,4 +3581,3 @@ func TestCreateSession_NewSessionPicksUpMostRecentSessionModel(t *testing.T) {
 		t.Errorf("expected provider 'openai', got %q", m.Provider)
 	}
 }
-

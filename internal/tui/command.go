@@ -28,12 +28,12 @@ const (
 
 // Command represents a slash command available in the TUI.
 type Command struct {
-	name        string
-	description string
-	typ         commandType
-	handler     func(m *Model, args string) tea.Cmd
-	available   func(m *Model) bool
-	multiStep   func(m *Model) []palette.Step
+	name         string
+	description  string
+	typ          commandType
+	handler      func(m *Model, args string) tea.Cmd
+	available    func(m *Model) bool
+	multiStep    func(m *Model) []palette.Step
 	chatTemplate string
 }
 
@@ -428,15 +428,17 @@ type modelPaletteItem struct {
 
 func (i modelPaletteItem) Title() string       { return i.title }
 func (i modelPaletteItem) Description() string { return i.description }
-func (i modelPaletteItem) FilterValue() string { return i.title + " " + i.category + " " + i.description }
-func (i modelPaletteItem) Category() string    { return i.category }
+func (i modelPaletteItem) FilterValue() string {
+	return i.title + " " + i.category + " " + i.description
+}
+func (i modelPaletteItem) Category() string { return i.category }
 
 func cmdModel(m *Model, _ string) tea.Cmd {
 	models := m.session.ListModels()
 	if len(models) == 0 {
 		m.blocks = append(m.blocks, messageBlock{
 			kind: blockError,
-			text: "No models available",
+			text: noModelGuidanceText(),
 		})
 		m.invalidateRenderedCache()
 		m.updateViewport()
@@ -489,6 +491,10 @@ func cmdModel(m *Model, _ string) tea.Cmd {
 	m.paletteActive = true
 	m.input.Blur()
 	return nil
+}
+
+func noModelGuidanceText() string {
+	return "No model connected. Use `/connect` to add a provider, then `/model` to choose one."
 }
 
 type thinkingPaletteItem struct {

@@ -685,12 +685,26 @@ Key formats supported in `auth.json`:
       "model": "gpt-4o"
     },
     "anthropic": {
-      "model": "claude-sonnet-4-20250514"
+      "model": "claude-sonnet-4-6"
     }
   },
-  "default_model": "claude-sonnet-4-20250514"
+  "default_model": "anthropic/claude-sonnet-4-6"
 }
 ```
+
+### 6.3a Model Selection and Stale Default Repair
+
+Tau treats a provider as usable only when it is registered in the current provider registry. Catalog entries alone are not enough, because they may lack credentials or point to a disabled provider.
+
+Initial model selection uses this priority:
+
+1. explicit CLI model,
+2. resumed session model,
+3. most recent session model for new sessions,
+4. `default_model`,
+5. deterministic fallback from connected providers only.
+
+When an automatic selection falls back from stale session/default metadata to a connected model, Tau persists the selected canonical `provider/model` back to the session and `default_model`. Explicit CLI model requests remain non-persistent and do not silently fall back.
 
 **OAuth deferred to post-MVP** — but the resolution chain is designed to accept OAuth tokens as a 5th priority step later.
 
@@ -1119,13 +1133,13 @@ Each tool declares its `ExecutionMode`:
       "model": "gpt-4o"
     },
     "anthropic": {
-      "model": "claude-sonnet-4-20250514"
+      "model": "claude-sonnet-4-6"
     },
     "google": {
       "model": "gemini-2.5-pro"
     }
   },
-  "default_model": "claude-sonnet-4-20250514",
+  "default_model": "anthropic/claude-sonnet-4-6",
   "compaction": {
     "reserve_tokens": 16384,
     "keep_recent_tokens": 20000

@@ -11,7 +11,7 @@ func TestModelRegistry_FindExact(t *testing.T) {
 
 	tests := []string{
 		"gpt-4o",
-		"claude-sonnet-4-20250514",
+		"claude-sonnet-4-6",
 		"gemini-2.5-pro",
 	}
 
@@ -36,7 +36,7 @@ func TestModelRegistry_FindPattern(t *testing.T) {
 		expectID string
 	}{
 		{"gpt-4o", "gpt-4o"},
-		{"claude-sonnet-4", "claude-sonnet-4-20250514"},
+		{"claude-sonnet-4", "claude-sonnet-4-6"},
 		{"gemini-2.5-pro", "gemini-2.5-pro"},
 		{"Gemini", "gemini-2.5-pro"},
 		{"nonexistent", ""},

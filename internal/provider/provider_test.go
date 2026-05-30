@@ -59,13 +59,13 @@ func TestRegistry_ResolveModel(t *testing.T) {
 	}
 
 	// Default model
-	r.SetDefaultModel("claude-sonnet-4-20250514")
+	r.SetDefaultModel("claude-sonnet-4-6")
 	m, err = r.ResolveModel("")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if m.ID != "claude-sonnet-4-20250514" {
-		t.Fatalf("expected claude-sonnet-4-20250514, got %s", m.ID)
+	if m.ID != "claude-sonnet-4-6" {
+		t.Fatalf("expected claude-sonnet-4-6, got %s", m.ID)
 	}
 
 	// No model and no default
@@ -362,11 +362,11 @@ func TestGoogleProvider_Interface(t *testing.T) {
 
 func TestGoogleProvider_ThinkingConfig(t *testing.T) {
 	tests := []struct {
-		name          string
-		level         types.ThinkingLevel
-		wantBudget    int
-		wantLevel     string
-		wantThinking  bool
+		name         string
+		level        types.ThinkingLevel
+		wantBudget   int
+		wantLevel    string
+		wantThinking bool
 	}{
 		{"off", types.ThinkingOff, 0, "", false},
 		{"empty", "", 0, "", false},
@@ -393,8 +393,8 @@ func TestGoogleProvider_ThinkingConfig(t *testing.T) {
 
 			provider := NewGoogleProviderWithClient("sk-test", client)
 			model := types.Model{
-				ID:       "gemini-3.1-pro",
-				API:      "google-generative-ai",
+				ID:        "gemini-3.1-pro",
+				API:       "google-generative-ai",
 				Reasoning: true,
 				ThinkingLevelMap: map[string]string{
 					"minimal": "MINIMAL", "low": "LOW", "medium": "MEDIUM", "high": "HIGH",
@@ -456,8 +456,8 @@ func TestGoogleProvider_ThinkingBudget(t *testing.T) {
 
 	provider := NewGoogleProviderWithClient("sk-test", client)
 	model := types.Model{
-		ID:       "gemini-2.5-pro",
-		API:      "google-generative-ai",
+		ID:        "gemini-2.5-pro",
+		API:       "google-generative-ai",
 		Reasoning: true,
 		ThinkingLevelMap: map[string]string{
 			"minimal": "128", "low": "2048", "medium": "8192", "high": "32768",
@@ -792,14 +792,14 @@ func TestMessageToAnthropic_ThinkingRoundTrip(t *testing.T) {
 func TestAnthropicProvider_SignatureDelta(t *testing.T) {
 	// Simulate Anthropic SSE with thinking_delta followed by signature_delta
 	body := []byte(
-		"event: message_start\ndata: {\"message\":{\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[],\"model\":\"claude\",\"stop_reason\":null,\"stop_sequence\":null,\"usage\":{\"input_tokens\":10,\"output_tokens\":0}}}\n\n"+
-		"event: content_block_start\ndata: {\"index\":0,\"content_block\":{\"type\":\"thinking\",\"thinking\":\"\"}}\n\n"+
-		"event: content_block_delta\ndata: {\"index\":0,\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\"Let me think\"}}\n\n"+
-		"event: content_block_delta\ndata: {\"index\":0,\"delta\":{\"type\":\"signature_delta\",\"signature\":\"sig_xyz789\"}}\n\n"+
-		"event: content_block_start\ndata: {\"index\":1,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n"+
-		"event: content_block_delta\ndata: {\"index\":1,\"delta\":{\"type\":\"text_delta\",\"text\":\"The answer is 42\"}}\n\n"+
-		"event: message_delta\ndata: {\"usage\":{\"output_tokens\":20,\"cache_creation_input_tokens\":0,\"cache_read_input_tokens\":0}}\n\n"+
-		"event: message_stop\ndata: {}\n\n",
+		"event: message_start\ndata: {\"message\":{\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[],\"model\":\"claude\",\"stop_reason\":null,\"stop_sequence\":null,\"usage\":{\"input_tokens\":10,\"output_tokens\":0}}}\n\n" +
+			"event: content_block_start\ndata: {\"index\":0,\"content_block\":{\"type\":\"thinking\",\"thinking\":\"\"}}\n\n" +
+			"event: content_block_delta\ndata: {\"index\":0,\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\"Let me think\"}}\n\n" +
+			"event: content_block_delta\ndata: {\"index\":0,\"delta\":{\"type\":\"signature_delta\",\"signature\":\"sig_xyz789\"}}\n\n" +
+			"event: content_block_start\ndata: {\"index\":1,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n" +
+			"event: content_block_delta\ndata: {\"index\":1,\"delta\":{\"type\":\"text_delta\",\"text\":\"The answer is 42\"}}\n\n" +
+			"event: message_delta\ndata: {\"usage\":{\"output_tokens\":20,\"cache_creation_input_tokens\":0,\"cache_read_input_tokens\":0}}\n\n" +
+			"event: message_stop\ndata: {}\n\n",
 	)
 
 	ctx := context.Background()
@@ -1208,11 +1208,11 @@ func TestAnthropicProvider_CollectFromStream_Thinking(t *testing.T) {
 			return &Response{
 				StatusCode: 200,
 				Body: []byte(
-					"event: message_start\ndata: {}\n\n"+
-						"event: content_block_start\ndata: {\"content_block\":{\"type\":\"thinking\"}}\n\n"+
-						"event: content_block_delta\ndata: {\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\"Let me reason\"}}\n\n"+
-						"event: content_block_start\ndata: {\"content_block\":{\"type\":\"text\"}}\n\n"+
-						"event: content_block_delta\ndata: {\"delta\":{\"type\":\"text_delta\",\"text\":\"Answer\"}}\n\n"+
+					"event: message_start\ndata: {}\n\n" +
+						"event: content_block_start\ndata: {\"content_block\":{\"type\":\"thinking\"}}\n\n" +
+						"event: content_block_delta\ndata: {\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\"Let me reason\"}}\n\n" +
+						"event: content_block_start\ndata: {\"content_block\":{\"type\":\"text\"}}\n\n" +
+						"event: content_block_delta\ndata: {\"delta\":{\"type\":\"text_delta\",\"text\":\"Answer\"}}\n\n" +
 						"event: message_delta\ndata: {\"usage\":{\"output_tokens\":5}}\n\n",
 				),
 			}, nil
@@ -1292,10 +1292,10 @@ func TestParseStreamResponse_ContextCancel_FlushesState(t *testing.T) {
 
 func TestAnthropicProvider_ThinkingMapping(t *testing.T) {
 	tests := []struct {
-		level          types.ThinkingLevel
-		wantType       string
-		wantEffort     string
-		wantBudget     int
+		level      types.ThinkingLevel
+		wantType   string
+		wantEffort string
+		wantBudget int
 	}{
 		{types.ThinkingOff, "", "", 0},
 		{types.ThinkingLow, "adaptive", "low", 0},
@@ -1318,10 +1318,10 @@ func TestAnthropicProvider_ThinkingMapping(t *testing.T) {
 			defer server.Close()
 
 			model := types.Model{
-				ID:       "claude-sonnet-4-20250514",
-				Provider: "anthropic",
-				API:      "anthropic-messages",
-				BaseURL:  server.URL,
+				ID:        "claude-sonnet-4-20250514",
+				Provider:  "anthropic",
+				API:       "anthropic-messages",
+				BaseURL:   server.URL,
 				Reasoning: true,
 				ThinkingLevelMap: map[string]string{
 					"low": "low", "medium": "medium", "high": "high", "xhigh": "xhigh",

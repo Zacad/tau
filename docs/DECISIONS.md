@@ -2,6 +2,13 @@
 
 <!-- Architectural and design decisions log -->
 
+## 2026-05-28 — Model Fallback Repairs Stale Defaults
+
+- **Decision**: Startup and resume model resolution now prefer models from connected providers and repair stale persisted model state after automatic fallback. `SetModel` resolves against connected providers and refuses unconnected providers before mutating session/config/agent state.
+- **Rationale**: A stale `default_model` such as `anthropic/claude-sonnet-4-20250514` should not prevent Tau from opening when other authenticated providers are available. Persisting the fallback prevents the same stale provider from being retried every startup. Refusing unconnected providers in `SetModel` prevents config/session corruption.
+- **Alternatives considered**: Auto-register providers from catalog entries (rejected: catalog availability does not imply auth), silently fall back for explicit CLI model requests (rejected: explicit user requests should fail clearly), leave stale defaults unchanged (rejected: repeats the startup problem indefinitely).
+- **Context**: Task 065 — user reported Tau failed to open because the default Anthropic model was stale and Anthropic credentials were unavailable despite other providers being configured.
+
 ## 2026-05-25 — Canonical Tool Lifecycle Contract Normalizes Provider Tool Metadata
 
 - **Decision**: Tau will introduce a canonical typed tool lifecycle contract at the agent boundary, including stable tool call IDs, explicit lifecycle semantics, and native-vs-inferred completion metadata. TUI tool-call rendering will consume this canonical data instead of provider-leaking ad hoc maps.

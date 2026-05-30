@@ -222,6 +222,13 @@ func NewModel(session *sdk.Session) *Model {
 
 	_ = m.commandRegistry.LoadCustomCommands(cwd, EmbeddedCommands())
 
+	if mod.ID == "" {
+		m.blocks = append(m.blocks, messageBlock{
+			kind: blockAssistantText,
+			text: noModelGuidanceText(),
+		})
+	}
+
 	// Load prompt history from file
 	m.promptHistory = loadPromptHistory(cwd)
 	m.promptHistoryIndex = -1
